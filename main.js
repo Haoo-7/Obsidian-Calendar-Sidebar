@@ -153,11 +153,26 @@ class CalendarSidebarPlugin extends Plugin {
   pointer-events: none;
 }
 .cal-today {
-  box-shadow: 0 0 0 2px var(--color-accent);
+  /* Full accent fill */
+  background: var(--color-accent) !important;
+}
+.cal-today.cal-has-image .cal-day-overlay {
+  background: rgba(0, 0, 0, 0.55);
+}
+.cal-today .cal-day-num {
+  color: #fff;
 }
 .cal-today:hover {
+  box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+/* Active (currently viewed date) — accent border only, transparent bg */
+.cal-active:not(.cal-today) {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.cal-active:not(.cal-today):hover {
   box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 4px var(--interactive-accent-hover);
 }
+/* When today is also the active date, today styling takes precedence */
 `;
     document.head.appendChild(style);
   }
@@ -233,6 +248,8 @@ class CalendarView extends ItemView {
     // Cache: "2026-7" → Map<"2026-07-15", embedLink[]>
     this.monthCache = new Map();
     this._refreshTimer = null;
+    // Currently viewed date (YYYY-MM-DD), used for highlight
+    this.activeDate = null;
   }
 
   getViewType()   { return VIEW_TYPE; }
@@ -245,6 +262,9 @@ class CalendarView extends ItemView {
 
     // Build data for current month
     await this.buildMonthCache(this.displayMonth);
+
+    // Detect which date the user is currently viewing
+    this._syncActiveDate();
     this.render();
 
     // Auto-refresh when vault changes
@@ -256,6 +276,13 @@ class CalendarView extends ItemView {
     );
     this.registerEvent(
       this.app.vault.on('delete', (file) => this._onFileChanged(file))
+    );
+    // Re-highlight when the user switches tabs/leaves
+    this.registerEvent(
+      this.app.workspace.on('active-leaf-change', () => {
+        this._syncActiveDate();
+        this.render();
+      })
     );
   }
 
@@ -397,6 +424,7 @@ class CalendarView extends ItemView {
       if (images.length > 0) cell.addClass('cal-has-image');
       else cell.addClass('cal-no-image');
       if (isToday) cell.addClass('cal-today');
+      if (dateStr === this.activeDate && !isToday) cell.addClass('cal-active');
 
       // Background image (first image as thumbnail)
       if (images.length > 0) {
@@ -441,10 +469,26 @@ class CalendarView extends ItemView {
 
   /* ----- Open daily note ----- */
   _openNote(dateStr) {
+    this.activeDate = dateStr;
+    this.render();
     const path = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) {
       this.app.workspace.getLeaf(false).openFile(file);
+    }
+  }
+
+  /* ----- Sync active date from the currently viewed leaf ----- */
+  _syncActiveDate() {
+    const leaf = this.app.workspace.activeLeaf;
+    if (!leaf) return;
+    const file = leaf.view?.file;
+    if (!(file instanceof TFile)) return;
+    const folderPrefix = this.plugin.settings.dailyFolder + '/';
+    if (!file.path.startsWith(folderPrefix)) return;
+    const match = file.name.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+    if (match) {
+      this.activeDate = match[1];
     }
   }
 }
