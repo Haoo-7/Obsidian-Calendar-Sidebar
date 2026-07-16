@@ -474,7 +474,12 @@ class CalendarView extends ItemView {
     const path = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) {
-      this.app.workspace.getLeaf(false).openFile(file);
+      // Find a leaf in the main content area — NOT our own sidebar leaf
+      const mdLeaves = this.app.workspace.getLeavesOfType('markdown');
+      const leaf = mdLeaves.length > 0
+        ? mdLeaves[0]                     // reuse existing tab
+        : this.app.workspace.getLeaf(true); // create new tab
+      leaf.openFile(file);
     }
     // Defer render to avoid race with active-leaf-change triggered by openFile
     setTimeout(() => this.render(), 0);
