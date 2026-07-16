@@ -7,7 +7,7 @@ DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏文件管理器
 
 1. 将 `calendar-sidebar/` 整个文件夹复制到你的 vault 的 `.obsidian/plugins/` 目录下
 2. 打开 Obsidian → 设置 → 第三方插件 → 开启「Calendar Sidebar」
-3. 重启 Obsidian 或手动运行命令「Open Calendar Sidebar」
+3. 重启 Obsidian
 
 ## 文件说明
 
