@@ -23,8 +23,8 @@ DayOne-style monthly calendar panel in the Obsidian left sidebar, above the file
 
 ## Installation
 
-- **BRAT**: Add `QVQSmile/obsidian-calendar-sidebar` to BRAT
-- **Manual**: Download `calendar-sidebar.zip` from [Releases](https://github.com/QVQSmile/obsidian-calendar-sidebar/releases), extract to `.obsidian/plugins/calendar-sidebar/` in your vault, enable in Obsidian settings, then run command `Open Calendar Sidebar`
+- **BRAT**: Add `Haoo-7/Obsidian-Calendar-Sidebar` to BRAT
+- **Manual**: Download `calendar-sidebar.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases), extract to `.obsidian/plugins/calendar-sidebar/` in your vault, enable in Obsidian settings, then run command `Open Calendar Sidebar`
 
 ## Files
 

@@ -23,8 +23,8 @@ DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏文件管理器
 
 ## 安装
 
-- **BRAT**：在 BRAT 中添加 `QVQSmile/obsidian-calendar-sidebar`
-- **手动**：从 [Releases](https://github.com/QVQSmile/obsidian-calendar-sidebar/releases) 下载 `calendar-sidebar.zip`，解压到 vault 的 `.obsidian/plugins/calendar-sidebar/`，在 Obsidian 设置中启用插件，运行命令「Open Calendar Sidebar」
+- **BRAT**：在 BRAT 中添加 `Haoo-7/Obsidian-Calendar-Sidebar`
+- **手动**：从 [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) 下载 `calendar-sidebar.zip`，解压到 vault 的 `.obsidian/plugins/calendar-sidebar/`，在 Obsidian 设置中启用插件，运行命令「Open Calendar Sidebar」
 
 ## 文件说明
 

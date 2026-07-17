@@ -20,7 +20,7 @@ DayOne-style monthly calendar panel in the Obsidian left sidebar. / DayOne 风�
 - Configurable daily folder with search suggest
 - Thumbnail filter: all images or date-prefixed only
 
-**Installation**: Add `QVQSmile/obsidian-calendar-sidebar` to BRAT, or download `calendar-sidebar.zip` from [Releases](https://github.com/QVQSmile/obsidian-calendar-sidebar/releases) and extract to `.obsidian/plugins/calendar-sidebar/`.
+**Installation**: Add `Haoo-7/Obsidian-Calendar-Sidebar` to BRAT, or download `calendar-sidebar.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) and extract to `.obsidian/plugins/calendar-sidebar/`.
 
 ---
 
@@ -36,7 +36,7 @@ DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏。
 - 可配置日记文件夹路径（支持搜索）
 - 缩略图过滤：全部图片或仅日期前缀图片
 
-**安装**：在 BRAT 中添加 `QVQSmile/obsidian-calendar-sidebar`，或从 [Releases](https://github.com/QVQSmile/obsidian-calendar-sidebar/releases) 下载 `calendar-sidebar.zip` 解压到 `.obsidian/plugins/calendar-sidebar/`。
+**安装**：在 BRAT 中添加 `Haoo-7/Obsidian-Calendar-Sidebar`，或从 [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) 下载 `calendar-sidebar.zip` 解压到 `.obsidian/plugins/calendar-sidebar/`。
 
 ---
 
