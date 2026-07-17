@@ -6,9 +6,11 @@
 
 ---
 
-# Calendar Sidebar — Obsidian Plugin
+# Calendar Sidebar — Obsidian Plugin / Obsidian 插件
 
-DayOne-style monthly calendar panel in the Obsidian left sidebar.
+DayOne-style monthly calendar panel in the Obsidian left sidebar. / DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏。
+
+![Calendar Sidebar preview / 预览](screenshots/calendar-sidebar-preview.png)
 
 - Monthly calendar in the left sidebar
 - Image thumbnails from daily notes as date cell backgrounds

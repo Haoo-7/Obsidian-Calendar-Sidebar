@@ -8,6 +8,8 @@
 
 DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏文件管理器上方。扫描日记文件夹下的笔记，自动提取图片作为日期格子缩略图背景。
 
+![Calendar Sidebar 预览](screenshots/calendar-sidebar-preview.png)
+
 ## 功能
 
 - **月历视图** — 显示在左侧侧边栏文件管理器上方

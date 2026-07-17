@@ -8,6 +8,8 @@
 
 DayOne-style monthly calendar panel in the Obsidian left sidebar, above the file explorer. Scans your daily notes folder and automatically extracts embedded images as date cell thumbnail backgrounds.
 
+![Calendar Sidebar preview](screenshots/calendar-sidebar-preview.png)
+
 ## Features
 
 - **Monthly calendar** in the left sidebar, above the file manager
