@@ -37,6 +37,9 @@ class CalendarSidebarPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    // Preload weather SVG icons (async but non-blocking)
+    this._preloadIcons();
+
     // Load styles (manually installed plugins don't auto-load styles.css)
     this._loadStyles();
 
@@ -235,6 +238,31 @@ class CalendarSidebarPlugin extends Plugin {
       await this.saveData(data);
       this._cleanupWeatherCache();
     }, 2000); // debounce 2s
+  }
+
+  /** Preloaded weather SVG icons (filename → data URI). */
+  _iconCache = null;
+
+  async _preloadIcons() {
+    if (this._iconCache) return this._iconCache;
+    this._iconCache = {};
+    const basePath = this.app.vault.adapter.basePath;
+    const iconDir = `${basePath}/.obsidian/plugins/calendar-sidebar/icons`;
+    const iconFiles = ['clear-day', 'partly-cloudy-day', 'overcast', 'fog', 'drizzle', 'rain', 'snow', 'thunderstorms'];
+    const fs = require('fs');
+    const path = require('path');
+    for (const name of iconFiles) {
+      try {
+        const svg = fs.readFileSync(path.join(iconDir, `${name}.svg`), 'utf-8');
+        this._iconCache[`${name}.svg`] = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+      } catch (e) { /* skip if file missing */ }
+    }
+    return this._iconCache;
+  }
+
+  /** Get data URI for a weather icon. */
+  _iconUrl(iconFile) {
+    return this._iconCache?.[iconFile] || '';
   }
 
   /** Remove cache entries older than 90 days. */
@@ -453,8 +481,11 @@ class CalendarSidebarPlugin extends Plugin {
   min-height: 0;
 }
 .cal-weather-icon {
-  font-size: 22px;
-  line-height: 1;
+  width: 28px;
+  height: 28px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
   flex-shrink: 0;
 }
 .cal-weather-info {
@@ -516,10 +547,12 @@ button.cal-weather-refresh:hover {
   position: absolute;
   top: 2px;
   right: 2px;
-  font-size: 10px;
+  width: 12px;
+  height: 12px;
+  background-size: contain;
+  background-repeat: no-repeat;
   z-index: 3;
   pointer-events: none;
-  line-height: 1;
 }
 
 /* --- Daily note weather overlay (Day One style frosted-glass chip) --- */
@@ -555,8 +588,11 @@ button.cal-weather-refresh:hover {
   transform: translateY(0);
 }
 .cal-note-overlay .cal-overlay-icon {
-  font-size: 16px;
-  line-height: 1;
+  width: 18px;
+  height: 18px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
   flex-shrink: 0;
 }
 .cal-note-overlay .cal-overlay-info {
@@ -871,38 +907,39 @@ button.cal-weather-refresh:hover {
    Weather Service — Open-Meteo integration
    ============================================================ */
 
-// WMO Weather interpretation codes (https://open-meteo.com/en/docs)
+// WMO Weather interpretation codes (Meteocons Filled SVG icons)
+// Icon values are .svg filenames in the icons/ directory
 const WMO_CODES = [
-  { code: 0,   condition: 'Clear sky',         icon: '\u2600\uFE0F' }, // ☀️
-  { code: 1,   condition: 'Mainly clear',       icon: '\uD83C\uDF1E' }, // 🌞
-  { code: 2,   condition: 'Partly cloudy',      icon: '\u26C5' },      // ⛅
-  { code: 3,   condition: 'Overcast',           icon: '\u2601\uFE0F' }, // ☁️
-  { code: 45,  condition: 'Foggy',              icon: '\uD83C\uDF2B\uFE0F' }, // 🌫️
-  { code: 48,  condition: 'Depositing rime fog',icon: '\uD83C\uDF2B\uFE0F' }, // 🌫️
-  { code: 51,  condition: 'Light drizzle',      icon: '\uD83D\uDCA7' }, // 💧
-  { code: 53,  condition: 'Moderate drizzle',   icon: '\uD83D\uDCA7' }, // 💧
-  { code: 55,  condition: 'Dense drizzle',      icon: '\uD83D\uDCA7' }, // 💧
-  { code: 61,  condition: 'Slight rain',        icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 63,  condition: 'Moderate rain',      icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 65,  condition: 'Heavy rain',         icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 71,  condition: 'Slight snow fall',   icon: '\uD83D\uDE81' }, // ❄️
-  { code: 73,  condition: 'Moderate snow fall', icon: '\uD83D\uDE81' }, // ❄️
-  { code: 75,  condition: 'Heavy snow fall',    icon: '\uD83D\uDE81' }, // ❄️
-  { code: 77,  condition: 'Snow grains',        icon: '\uD83D\uDE81' }, // ❄️
-  { code: 80,  condition: 'Slight rain showers',icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 81,  condition: 'Moderate rain showers',icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 82,  condition: 'Violent rain showers', icon: '\uD83C\uDF27\uFE0F' }, // 🌧️
-  { code: 85,  condition: 'Slight snow showers',icon: '\uD83D\uDE81' }, // ❄️
-  { code: 86,  condition: 'Heavy snow showers', icon: '\uD83D\uDE81' }, // ❄️
-  { code: 95,  condition: 'Thunderstorm',       icon: '\u26C8\uFE0F' }, // ⛈️
-  { code: 96,  condition: 'Thunderstorm w/ hail',icon: '\u26C8\uFE0F' }, // ⛈️
-  { code: 99,  condition: 'Thunderstorm w/ heavy hail',icon: '\u26C8\uFE0F' }, // ⛈️
+  { code: 0,   condition: 'Clear sky',               icon: 'clear-day.svg' },
+  { code: 1,   condition: 'Mainly clear',             icon: 'clear-day.svg' },
+  { code: 2,   condition: 'Partly cloudy',            icon: 'partly-cloudy-day.svg' },
+  { code: 3,   condition: 'Overcast',                 icon: 'overcast.svg' },
+  { code: 45,  condition: 'Foggy',                    icon: 'fog.svg' },
+  { code: 48,  condition: 'Depositing rime fog',      icon: 'fog.svg' },
+  { code: 51,  condition: 'Light drizzle',            icon: 'drizzle.svg' },
+  { code: 53,  condition: 'Moderate drizzle',         icon: 'drizzle.svg' },
+  { code: 55,  condition: 'Dense drizzle',            icon: 'drizzle.svg' },
+  { code: 61,  condition: 'Slight rain',              icon: 'rain.svg' },
+  { code: 63,  condition: 'Moderate rain',            icon: 'rain.svg' },
+  { code: 65,  condition: 'Heavy rain',               icon: 'rain.svg' },
+  { code: 71,  condition: 'Slight snow fall',         icon: 'snow.svg' },
+  { code: 73,  condition: 'Moderate snow fall',       icon: 'snow.svg' },
+  { code: 75,  condition: 'Heavy snow fall',          icon: 'snow.svg' },
+  { code: 77,  condition: 'Snow grains',              icon: 'snow.svg' },
+  { code: 80,  condition: 'Slight rain showers',      icon: 'rain.svg' },
+  { code: 81,  condition: 'Moderate rain showers',    icon: 'rain.svg' },
+  { code: 82,  condition: 'Violent rain showers',     icon: 'rain.svg' },
+  { code: 85,  condition: 'Slight snow showers',      icon: 'snow.svg' },
+  { code: 86,  condition: 'Heavy snow showers',       icon: 'snow.svg' },
+  { code: 95,  condition: 'Thunderstorm',             icon: 'thunderstorms.svg' },
+  { code: 96,  condition: 'Thunderstorm w/ hail',     icon: 'thunderstorms.svg' },
+  { code: 99,  condition: 'Thunderstorm w/ heavy hail', icon: 'thunderstorms.svg' },
 ];
 
 /** Look up WMO code metadata; falls back to generic description. */
 function _lookupWmo(code) {
   const entry = WMO_CODES.find((w) => w.code === code);
-  return entry || { condition: `Weather code ${code}`, icon: '\uD83C\uDF26\uFE0F' }; // 🌦️
+  return entry || { condition: `Weather code ${code}`, icon: 'overcast.svg' };
 }
 
 /** Validate that lat/lng are within acceptable ranges. */
@@ -2498,8 +2535,9 @@ class CalendarView extends ItemView {
       if (this.plugin.settings.weatherEnabled && this.weather.hasCachedSnapshot(dateStr)) {
         const snap = this._readCachedWeather(dateStr);
         if (snap) {
-          const badge = cell.createDiv({ cls: 'cal-weather-badge' });
-          badge.setText(snap.icon);
+        const badge = cell.createDiv({ cls: 'cal-weather-badge' });
+        const iconUrl = this.plugin._iconUrl(snap.icon);
+        if (iconUrl) badge.style.backgroundImage = `url(${iconUrl})`;
           badge.setAttribute('aria-label', `${snap.condition}, ${snap.temperature}${this._unitSymbol(snap.units)}`);
           badge.title = `${snap.condition} · ${snap.temperature}${this._unitSymbol(snap.units)}`;
         }
@@ -2674,14 +2712,17 @@ class CalendarView extends ItemView {
 
     const snap = this._weatherSnapshot;
     if (!snap) {
-      card.querySelector('.cal-weather-icon').setText('\uD83C\uDF26\uFE0F');
+      const iconEl = card.querySelector('.cal-weather-icon');
+      const iconUrl = this.plugin._iconUrl('overcast.svg');
+      iconEl.style.backgroundImage = iconUrl ? `url(${iconUrl})` : '';
       card.querySelector('.cal-weather-temp').setText('—');
       card.querySelector('.cal-weather-detail').setText(_l(lang, 'noData'));
       return;
     }
 
     const iconEl = card.querySelector('.cal-weather-icon');
-    iconEl.setText(snap.icon);
+    const iconUrl = this.plugin._iconUrl(snap.icon);
+    iconEl.style.backgroundImage = iconUrl ? `url(${iconUrl})` : '';
     iconEl.setAttribute('aria-label', snap.condition);
     iconEl.title = snap.condition;
 
@@ -3260,7 +3301,11 @@ class CalendarView extends ItemView {
       const lang = this.plugin.settings.weatherLanguage;
       const labelKey = snap.temperatureLabel === 'Now' ? 'now' : 'high';
       if (tempEl) tempEl.textContent = `${_l(lang, labelKey)} ${snap.temperature ?? '?'}${unitSym}`;
-      if (iconEl) { iconEl.textContent = snap.icon; iconEl.title = snap.condition; }
+      if (iconEl) {
+        const iconUrl = this.plugin._iconUrl(snap.icon);
+        iconEl.style.backgroundImage = iconUrl ? `url(${iconUrl})` : '';
+        iconEl.title = snap.condition;
+      }
 
       const parts = [];
       if (snap.feelsLike != null) parts.push(`${_l(lang, 'feels')} ${snap.feelsLike}${unitSym}`);
