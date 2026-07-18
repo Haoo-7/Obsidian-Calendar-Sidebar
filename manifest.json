@@ -1,10 +1,10 @@
 {
-  "id": "calendar-sidebar",
-  "name": "Calendar Sidebar",
-  "version": "1.3.0",
+  "id": "dayline",
+  "name": "Dayline",
+  "version": "2.0.0",
   "minAppVersion": "1.5.0",
-  "description": "DayOne-style monthly calendar in the left sidebar with image thumbnails, today/browsing-date highlight, and auto-create daily notes from template. / DayOne 风格月历面板，支持图片缩略图、日期高亮、一键创建日记。",
+  "description": "A visual journal for calendars, timelines, moods, memories, weather, and photos. / 集日历、时间线、心情、回顾、天气和照片于一体的可视化日记工具。",
   "author": "Sisyphus",
-  "dir": ".obsidian/plugins/calendar-sidebar",
+  "dir": ".obsidian/plugins/dayline",
   "isDesktopOnly": true
 }

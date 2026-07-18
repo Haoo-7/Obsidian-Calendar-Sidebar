@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 (2026-07-19)
+
+### Branding
+- Renamed the plugin from Calendar Sidebar to **Dayline**, reflecting its calendar, timeline, mood, memory, weather, and photo workflows.
+- Changed the Obsidian plugin ID and install directory to `dayline`.
+- Added one-time migration of the old `calendar-sidebar/data.json` into the new plugin directory without overwriting existing new data.
 
 ### Added
 - Added a TypeScript journal index with multiple source directories and Day One/Apple Journal metadata aliases.

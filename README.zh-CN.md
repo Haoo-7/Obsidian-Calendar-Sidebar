@@ -4,11 +4,11 @@
 
 ---
 
-# Calendar Sidebar — Obsidian 插件
+# Dayline — Obsidian 插件
 
-DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏文件管理器上方。扫描日记文件夹下的笔记，自动提取图片作为日期格子缩略图背景。
+Dayline 是一个集日历、时间线、心情、回顾、天气和照片于一体的可视化日记工具。月历和时间线共同组成主要工作界面。
 
-![Calendar Sidebar 预览](screenshots/calendar-sidebar-preview.png)
+![Dayline 预览](screenshots/calendar-sidebar-preview.png)
 
 ## 功能
 
@@ -61,8 +61,8 @@ Day One 或 Apple Journal 导入请先使用专业导入插件，再把输出目
 
 ## 安装
 
-- **BRAT**：在 BRAT 中添加 `Haoo-7/Obsidian-Calendar-Sidebar`
-- **手动**：从 [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) 下载 `calendar-sidebar.zip`，解压到 vault 的 `.obsidian/plugins/calendar-sidebar/`，在 Obsidian 设置中启用插件，运行命令「Open Calendar Sidebar」
+- **BRAT**：在 BRAT 中添加 `Haoo-7/Obsidian-Dayline`
+- **手动**：从 [Releases](https://github.com/Haoo-7/Obsidian-Dayline/releases) 下载 `dayline.zip`，解压到 vault 的 `.obsidian/plugins/dayline/`，在 Obsidian 设置中启用插件，运行命令「Open Dayline」
 
 ## 文件说明
 
@@ -74,11 +74,11 @@ Day One 或 Apple Journal 导入请先使用专业导入插件，再把输出目
 | `tests/` | 日期、缓存、摘要和安全 DOM 单元测试 |
 | `build.mjs` | esbuild 构建脚本 |
 | `libheif-bundle.js` | HEIC/HEIF 解码器 |
-| `Calendar Sidebar 插件设计方案.md` | 原始设计文档 |
+| `Dayline 插件设计方案.md` | 原始设计文档 |
 
 ## 配置
 
-在 Obsidian 设置 → 第三方插件 → Calendar Sidebar：
+在 Obsidian 设置 → 第三方插件 → Dayline：
 
 | 设置项 | 说明 |
 |--------|------|

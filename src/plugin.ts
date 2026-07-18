@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Calendar Sidebar — DayOne-style calendar in Obsidian left sidebar.
+ * Dayline — a visual journal for calendars, timelines, moods, memories, weather, and photos.
  * Scans Calendar/Daily/ for notes with images, shows thumbnails in date cells.
  * Click a date to open that day's daily note.
  */
@@ -51,13 +51,14 @@ const DEFAULT_SETTINGS = {
   reminderHour: 21,
 };
 
-class CalendarSidebarPlugin extends Plugin {
+class DaylinePlugin extends Plugin {
   async onload() {
     this._dataWriteQueue = Promise.resolve();
     this._weatherSaveTimer = null;
     this._weatherCleanupTimer = null;
     this._exifHoverToken = 0;
     this._otdRequestToken = 0;
+    await this._migrateLegacyData();
     await this.loadSettings();
 
     this.moodStore = new MoodStore(this.app, this.settings);
@@ -82,11 +83,11 @@ class CalendarSidebarPlugin extends Plugin {
     // Preload libheif WASM module eagerly
     try {
       const path = require('path');
-      const pluginDir = path.join(this.app.vault.adapter.basePath, '.obsidian', 'plugins', 'calendar-sidebar');
+      const pluginDir = path.join(this.app.vault.adapter.basePath, '.obsidian', 'plugins', 'dayline');
       const libheifFactory = require(path.join(pluginDir, 'libheif-bundle.js'));
       this._libheifFactory = libheifFactory;
     } catch (e) {
-      console.warn('[CalendarSidebar] Failed to load libheif:', e.message);
+      console.warn('[Dayline] Failed to load libheif:', e.message);
       this._libheifFactory = null;
     }
     // Track containers where we set position:relative so we can revert on unload
@@ -111,7 +112,7 @@ class CalendarSidebarPlugin extends Plugin {
         const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
         if (leaf?.view) {
           leaf.view.refreshWeather().catch((err) => {
-            console.warn('[CalendarSidebar] Refresh weather failed:', err.message);
+            console.warn('[Dayline] Refresh weather failed:', err.message);
           });
         }
       },
@@ -200,7 +201,7 @@ class CalendarSidebarPlugin extends Plugin {
     });
 
     // Settings tab
-    this.addSettingTab(new CalendarSidebarSettingsTab(this.app, this));
+    this.addSettingTab(new DaylineSettingsTab(this.app, this));
 
     // Initialize EXIF tooltip element (shared across calendar & note-image hover)
     this._exifTooltipEl = null;
@@ -244,7 +245,22 @@ class CalendarSidebarPlugin extends Plugin {
     this._removeAllOverlays();
     this._exifTooltipEl?.remove();
     this._exifTooltipEl = null;
+    document.getElementById('dayline-styles')?.remove();
     document.getElementById('calendar-sidebar-styles')?.remove();
+  }
+
+  async _migrateLegacyData() {
+    const adapter = this.app.vault?.adapter;
+    if (!adapter?.exists || !adapter?.read || !adapter?.write) return;
+    const legacyPath = '.obsidian/plugins/calendar-sidebar/data.json';
+    const currentPath = '.obsidian/plugins/dayline/data.json';
+    try {
+      if (await adapter.exists(currentPath) || !(await adapter.exists(legacyPath))) return;
+      await adapter.write(currentPath, await adapter.read(legacyPath));
+      console.info('[Dayline] Migrated Calendar Sidebar settings and weather cache.');
+    } catch (error) {
+      console.warn('[Dayline] Legacy data migration failed:', error);
+    }
   }
 
   async activateTimeline() {
@@ -377,7 +393,7 @@ class CalendarSidebarPlugin extends Plugin {
       if (token !== this._otdRequestToken) return;
       new OnThisDayModal(this.app, this, provider, month, day, entries).open();
     }).catch((err) => {
-      console.warn('[CalendarSidebar] On This Day load failed:', err.message);
+      console.warn('[Dayline] On This Day load failed:', err.message);
     });
   }
 
@@ -482,7 +498,7 @@ class CalendarSidebarPlugin extends Plugin {
     this._weatherSaveTimer = setTimeout(() => {
       this._weatherSaveTimer = null;
       this._flushWeatherCache().catch((err) => {
-        console.warn('[CalendarSidebar] Weather cache save failed:', err.message);
+        console.warn('[Dayline] Weather cache save failed:', err.message);
       });
     }, 2000); // debounce 2s
   }
@@ -533,7 +549,7 @@ class CalendarSidebarPlugin extends Plugin {
   }
 
   _loadStyles() {
-    const styleId = 'calendar-sidebar-styles';
+    const styleId = 'dayline-styles';
     let style = document.getElementById(styleId);
     if (!style) {
         style = document.createElement('style');
@@ -1198,7 +1214,7 @@ button.cal-weather-refresh:hover {
       leaf = workspace.getLeftLeaf(false);
     }
     if (!leaf) {
-      new Notice('Calendar Sidebar: could not create left sidebar leaf');
+      new Notice('Dayline: could not create calendar leaf');
       return;
     }
 
@@ -1524,12 +1540,12 @@ class WeatherService {
     try {
       response = await requestUrl({ url, timeout: 10000 });
     } catch (err) {
-      console.warn('[CalendarSidebar] Weather fetch failed:', err.message);
+      console.warn('[Dayline] Weather fetch failed:', err.message);
       return null;
     }
 
     if (response.status !== 200 || !response.json) {
-      console.warn('[CalendarSidebar] Weather API returned status', response.status);
+      console.warn('[Dayline] Weather API returned status', response.status);
       return null;
     }
 
@@ -1584,12 +1600,12 @@ class WeatherService {
     if (!dailyData) return null;
     // Validate response status and JSON structure before accessing daily data
     if (dailyData.status !== 200 || !dailyData.json) {
-      console.warn('[CalendarSidebar] Daily weather fetch returned unexpected response');
+      console.warn('[Dayline] Daily weather fetch returned unexpected response');
       return null;
     }
     const dailyJson = dailyData.json;
     if (!dailyJson?.daily) {
-      console.warn('[CalendarSidebar] Daily weather data missing "daily" field');
+      console.warn('[Dayline] Daily weather data missing "daily" field');
       return null;
     }
     const daily = dailyJson.daily;
@@ -1597,7 +1613,7 @@ class WeatherService {
     const idx = dates.indexOf(dateStr);
 
     if (idx === -1) {
-      console.warn(`[CalendarSidebar] Weather data unavailable for ${dateStr}`);
+      console.warn(`[Dayline] Weather data unavailable for ${dateStr}`);
       return null;
     }
 
@@ -1644,7 +1660,7 @@ class WeatherService {
     try {
       return await requestUrl({ url, timeout: 8000 });
     } catch (err) {
-      console.warn('[CalendarSidebar] Daily weather fetch failed:', err.message);
+      console.warn('[Dayline] Daily weather fetch failed:', err.message);
       return null;
     }
   }
@@ -1685,7 +1701,7 @@ class WeatherService {
 
     // Persist to frontmatter asynchronously — fire-and-forget with error handling
     this._persistSnapshot(dateStr, weather).catch((err) => {
-      console.warn('[CalendarSidebar] Async weather persistence failed:', err.message);
+      console.warn('[Dayline] Async weather persistence failed:', err.message);
     });
 
     return weather;
@@ -1713,7 +1729,7 @@ class WeatherService {
       try {
         await this.forceRefresh(dateStr);
       } catch (e) {
-        console.warn('[CalendarSidebar] Backfill failed for', dateStr, e.message);
+        console.warn('[Dayline] Backfill failed for', dateStr, e.message);
       }
       done++;
       onProgress?.(done, total, dateStr, false);
@@ -1755,7 +1771,7 @@ const LOCALE = {
     s_thumbnailDate:     'Only date-prefixed (YYYY-MM-DD_*)',
     s_weather:           'Weather',
     s_weatherEnable:     'Enable weather',
-    s_weatherEnableDesc: 'Show weather info for dates in the calendar sidebar',
+    s_weatherEnableDesc: 'Show weather info for dates in Dayline',
     s_latitude:          'Latitude',
     s_latitudeDesc:      'Your latitude (e.g. 39.9042 for Beijing)',
     s_longitude:         'Longitude',
@@ -2341,7 +2357,7 @@ class HeicCache {
 
   _getLibheif() {
     if (!this._libheifReady) {
-      const plugin = this.app.plugins?.plugins?.['calendar-sidebar'];
+      const plugin = this.app.plugins?.plugins?.dayline;
       const factory = plugin?._libheifFactory;
       if (!factory) {
         return Promise.reject(new Error('libheif not loaded'));
@@ -2421,7 +2437,7 @@ class HeicCache {
 
       return { dataUrl, width: tw, height: th };
     } catch (e) {
-      console.warn('[CalendarSidebar] HEIC conversion failed:', e.message || e);
+      console.warn('[Dayline] HEIC conversion failed:', e.message || e);
       return null;
     }
   }
@@ -2484,7 +2500,7 @@ class ReverseGeocoder {
 
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=12&accept-language=zh`;
-      const resp = await requestUrl({ url, headers: { 'User-Agent': 'ObsidianCalendarSidebar/1.2' } });
+      const resp = await requestUrl({ url, headers: { 'User-Agent': 'ObsidianDayline/2.0' } });
       if (resp.status === 200 && resp.json) {
         const data = resp.json;
         // Use display_name: e.g. "广州市天河区..." 
@@ -3165,7 +3181,7 @@ class CalendarView extends ItemView {
     refreshBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._performRefresh(cardDate, refreshBtn).catch((err) => {
-        console.warn('[CalendarSidebar] Refresh weather from card failed:', err.message);
+        console.warn('[Dayline] Refresh weather from card failed:', err.message);
       });
     });
 
@@ -3374,7 +3390,7 @@ class CalendarView extends ItemView {
         this._updateWeatherCardUI();
       }
     }).catch((err) => {
-      console.warn('[CalendarSidebar] Weather fetch after note open failed:', err.message);
+      console.warn('[Dayline] Weather fetch after note open failed:', err.message);
     });
   }
 
@@ -3661,7 +3677,7 @@ class CalendarView extends ItemView {
       try {
         await this._buildOverlayForLeaf(leaf, file, dateStr);
       } catch (err) {
-        console.warn('[CalendarSidebar] Overlay build failed:', err.message);
+        console.warn('[Dayline] Overlay build failed:', err.message);
       } finally {
         // Clean up in-flight marker
         this._overlayInFlight.delete(leaf);
@@ -3761,7 +3777,7 @@ class CalendarView extends ItemView {
     refreshBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._performOverlayRefresh(dateStr, refreshBtn, overlay).catch((err) => {
-        console.warn('[CalendarSidebar] Overlay refresh failed:', err.message);
+        console.warn('[Dayline] Overlay refresh failed:', err.message);
       });
     });
 
@@ -3809,7 +3825,7 @@ class CalendarView extends ItemView {
       if (snap.humidity != null) parts.push(`${_l(lang, 'humidity')} ${snap.humidity}%`);
       if (detailEl) detailEl.textContent = parts.join(' · ') || '';
     } catch (err) {
-      console.warn('[CalendarSidebar] Overlay refresh failed:', err.message);
+      console.warn('[Dayline] Overlay refresh failed:', err.message);
     } finally {
       if (btnEl?.isConnected) {
         btnEl.removeAttribute('disabled');
@@ -3927,7 +3943,7 @@ class CalendarView extends ItemView {
 /* ============================================================
    Settings Tab
    ============================================================ */
-class CalendarSidebarSettingsTab extends PluginSettingTab {
+class DaylineSettingsTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -3954,7 +3970,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
     containerEl.empty();
     const _s = (key, ...args) => _l(this.plugin.settings.weatherLanguage, key, ...args);
 
-    containerEl.createEl('h2', { text: 'Calendar Sidebar' });
+    containerEl.createEl('h2', { text: 'Dayline' });
 
     /* ======================
        Section: Diary 日记
@@ -4629,4 +4645,4 @@ function _iconUrl(iconFile) {
   return SVG_ICONS[iconFile] || '';
 }
 
-export default CalendarSidebarPlugin;
+export default DaylinePlugin;

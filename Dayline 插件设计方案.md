@@ -1,4 +1,4 @@
-# Calendar Sidebar — Obsidian 日历侧边栏插件设计方案
+# Dayline — Obsidian 日历侧边栏插件设计方案
 
 ## 概述
 
@@ -54,7 +54,7 @@
 ### 项目结构
 
 ```
-Main_Topic/.obsidian/plugins/calendar-sidebar/
+Main_Topic/.obsidian/plugins/dayline/
 ├── manifest.json           # 插件元信息
 ├── main.ts                 # 插件入口：注册视图、生命周期
 ├── calendar-view.ts        # CalendarView (ItemView) 渲染
@@ -248,7 +248,7 @@ ObJournal 的 storage API：
   读取 EXIF → 写入 Calendar/Daily/2026-07-15.md 的 ## Pics 下
   格式：![[2026-07-15_xxx.jpg]]
   ↓
-[Calendar Sidebar]
+[Dayline]
   vault.on('create') / vault.on('modify')
   ↓
   metadataCache.getCache(file)
@@ -267,7 +267,7 @@ ObJournal 的 storage API：
 
 ## 与 ObJournal 的关系
 
-| 功能 | ObJournal 负责 | Calendar Sidebar 负责 |
+| 功能 | ObJournal 负责 | Dayline 负责 |
 |------|---------------|----------------------|
 | 月历视图 | ✅ 已有（在主面板） | ✅ 侧边栏精简版 |
 | 列表视图 | ✅ | ❌ |
@@ -277,7 +277,7 @@ ObJournal 的 storage API：
 | 侧边栏日历 | ❌ | ✅ 核心功能 |
 | 点击日期开日记 | ❌ | ✅ 核心功能 |
 
-两者互补：ObJournal 管"打开后的浏览体验"，Calendar Sidebar 管"快速导航到某天"。
+两者互补：ObJournal 管"打开后的浏览体验"，Dayline 管"快速导航到某天"。
 
 ---
 

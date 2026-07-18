@@ -6,11 +6,11 @@
 
 ---
 
-# Calendar Sidebar — Obsidian Plugin / Obsidian 插件
+# Dayline — Obsidian Plugin / Obsidian 插件
 
-DayOne-style monthly calendar panel in the Obsidian left sidebar. / DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏。
+Dayline is a visual journal for calendars, timelines, moods, memories, weather, and photos. / Dayline 是一个集日历、时间线、心情、回顾、天气和照片于一体的可视化日记工具。
 
-![Calendar Sidebar preview / 预览](screenshots/calendar-sidebar-preview.png)
+![Dayline preview / 预览](screenshots/calendar-sidebar-preview.png)
 
 - Monthly calendar in the left sidebar
 - Image thumbnails from daily notes as date cell backgrounds
@@ -32,13 +32,13 @@ Journal bodies remain Markdown. The timeline indexes the configured daily-notes 
 
 Mood metadata is authoritative in `Calendar/journal-metadata.json` by default. Markdown frontmatter is unchanged unless mirroring is enabled, and deleted-note records remain recoverable as orphans.
 
-**Installation**: Add `Haoo-7/Obsidian-Calendar-Sidebar` to BRAT, or download `calendar-sidebar.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) and extract to `.obsidian/plugins/calendar-sidebar/`.
+**Installation**: Add `Haoo-7/Obsidian-Dayline` to BRAT, or download `dayline.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Dayline/releases) and extract to `.obsidian/plugins/dayline/`. On first launch, Dayline migrates the old plugin `data.json` when the new directory has no data file.
 
 ---
 
-# Calendar Sidebar — Obsidian 插件
+# Dayline — Obsidian 插件
 
-DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏。
+Dayline 是一个集日历、时间线、心情、回顾、天气和照片于一体的可视化日记工具。
 
 - 月历视图显示在左侧侧边栏
 - 自动提取日记图片作为日期格子缩略图
@@ -49,7 +49,7 @@ DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏。
 - 缩略图过滤：全部图片或仅日期前缀图片
 - 天气卡片（Open-Meteo 集成，可选，隐藏 YAML 快照）
 
-**安装**：在 BRAT 中添加 `Haoo-7/Obsidian-Calendar-Sidebar`，或从 [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) 下载 `calendar-sidebar.zip` 解压到 `.obsidian/plugins/calendar-sidebar/`。
+**安装**：在 BRAT 中添加 `Haoo-7/Obsidian-Dayline`，或从 [Releases](https://github.com/Haoo-7/Obsidian-Dayline/releases) 下载 `dayline.zip` 解压到 `.obsidian/plugins/dayline/`。首次启动时，如果新目录没有 `data.json`，Dayline 会迁移旧插件的数据。
 
 ---
 

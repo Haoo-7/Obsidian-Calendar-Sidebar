@@ -98,7 +98,7 @@ export class MoodStore {
         this.loaded = true;
         return;
       }
-      console.warn('[CalendarSidebar] Mood metadata could not be read:', error);
+      console.warn('[Dayline] Mood metadata could not be read:', error);
       this.data = emptyMetadata();
       this.loaded = true;
     }

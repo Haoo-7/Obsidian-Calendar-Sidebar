@@ -4,11 +4,11 @@
 
 ---
 
-# Calendar Sidebar — Obsidian Plugin
+# Dayline — Obsidian Plugin
 
-DayOne-style monthly calendar panel in the Obsidian left sidebar, above the file explorer. Scans your daily notes folder and automatically extracts embedded images as date cell thumbnail backgrounds.
+Dayline is a visual journal for calendars, timelines, moods, memories, weather, and photos. It includes the monthly calendar, journal timeline, mood metadata, On This Day review, and media thumbnails.
 
-![Calendar Sidebar preview](screenshots/calendar-sidebar-preview.png)
+![Dayline preview](screenshots/calendar-sidebar-preview.png)
 
 ## Features
 
@@ -50,8 +50,8 @@ Use [Day One Importer](https://github.com/MarcDonald/obsidian-day-one-importer) 
 
 ## Installation
 
-- **BRAT**: Add `Haoo-7/Obsidian-Calendar-Sidebar` to BRAT
-- **Manual**: Download `calendar-sidebar.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases), extract to `.obsidian/plugins/calendar-sidebar/` in your vault, enable in Obsidian settings, then run command `Open Calendar Sidebar`
+- **BRAT**: Add `Haoo-7/Obsidian-Dayline` to BRAT
+- **Manual**: Download `dayline.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Dayline/releases), extract to `.obsidian/plugins/dayline/` in your vault, enable in Obsidian settings, then run command `Open Dayline`
 
 ## Files
 
@@ -63,11 +63,11 @@ Use [Day One Importer](https://github.com/MarcDonald/obsidian-day-one-importer) 
 | `tests/` | Unit tests for date, cache, excerpt, and safe DOM logic |
 | `build.mjs` | esbuild release build |
 | `libheif-bundle.js` | HEIC/HEIF decoder bundle |
-| `Calendar Sidebar 插件设计方案.md` | Original design doc (Chinese) |
+| `Dayline 插件设计方案.md` | Original design doc (Chinese) |
 
 ## Settings
 
-Configured in Obsidian Settings → Community Plugins → Calendar Sidebar:
+Configured in Obsidian Settings → Community Plugins → Dayline:
 
 | Setting | Description |
 |---------|-------------|
@@ -81,6 +81,8 @@ Configured in Obsidian Settings → Community Plugins → Calendar Sidebar:
 ## Templater Integration
 
 If you have a template configured in Obsidian's Daily Notes plugin and Templater is installed, clicking a date without a note will create one using the template with all Templater variables resolved (`tp.file.title`, date, week number, etc.).
+
+When upgrading from Calendar Sidebar 1.x, Dayline copies the old plugin `data.json` into `.obsidian/plugins/dayline/` only when the new data file does not already exist. Vault mood metadata and Markdown notes remain unchanged.
 
 ## Requirements
 
