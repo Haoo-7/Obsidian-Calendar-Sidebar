@@ -25,6 +25,12 @@ const DEFAULT_SETTINGS = {
   weatherLanguage: 'zh',  // 'en' | 'zh' — display language for weather labels
   // --- EXIF metadata ---
   showExif: true,         // show EXIF metadata tooltip on image hover
+  // --- On This Day settings ---
+  onThisDayDot: false,    // show accent dots on cells with past-year entries
+  onThisDayButton: true,  // show sidebar button to open On This Day modal
+  onThisDayExcerptMode: 'auto',  // 'auto' | 'frontmatter' | 'template' | 'none'
+  onThisDayExcerptKey: 'excerpt',  // frontmatter key when mode is 'frontmatter'
+  onThisDayExcerptTemplate: '{body}',  // template when mode is 'template'
 };
 
 class CalendarSidebarPlugin extends Plugin {
@@ -40,6 +46,8 @@ class CalendarSidebarPlugin extends Plugin {
     this.exifCache = new ImageMetadataCache(this.app);
     // HEIC thumbnail conversion cache
     this.heicCache = new HeicCache(this.app);
+    // Reverse geocoder for EXIF GPS coordinates (Nominatim, free)
+    this.geocoder = new ReverseGeocoder();
 
     // Preload libheif WASM module eagerly
     try {
@@ -75,6 +83,16 @@ class CalendarSidebarPlugin extends Plugin {
             console.warn('[CalendarSidebar] Refresh weather failed:', err.message);
           });
         }
+      },
+    });
+
+    // Command: Open On This Day modal
+    this.addCommand({
+      id: 'open-on-this-day',
+      name: 'Open On This Day / 打开去年今日',
+      callback: () => {
+        const today = new Date();
+        this.openOnThisDay(today.getMonth() + 1, today.getDate());
       },
     });
 
@@ -133,6 +151,16 @@ class CalendarSidebarPlugin extends Plugin {
         view._syncNoteOverlays();
       }
     }
+  }
+
+  /* ----- On This Day ----- */
+  openOnThisDay(month, day) {
+    const calendarLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    const provider = calendarLeaf?.view?._otdProvider;
+    if (!provider) return;
+    provider.getEntries(month, day).then((entries) => {
+      new OnThisDayModal(this.app, this, provider, month, day, entries).open();
+    });
   }
 
   /* ----- Shared EXIF Tooltip (used by calendar view + note-image hover) ----- */
@@ -548,6 +576,190 @@ button.cal-weather-refresh:hover {
   .cal-note-overlay .spin {
     animation-duration: 2s;
   }
+}
+/* --- On This Day --- */
+.cal-otd-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cal-otd-button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cal-otd-dot {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  opacity: 0.5;
+  z-index: 3;
+  pointer-events: none;
+}
+/* --- On This Day Modal (photo wall) --- */
+.cal-otd-modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.cal-otd-panel {
+  width: 560px;
+  max-height: 85vh;
+  background: var(--background-primary);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.theme-light .cal-otd-panel {
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0,0,0,0.06);
+}
+.theme-dark .cal-otd-panel {
+  background: rgba(40,40,40,0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.cal-otd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+.cal-otd-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cal-otd-close {
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+  width: 28px; height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.cal-otd-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cal-otd-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-otd-date-input {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 110px;
+  text-align: center;
+  font-family: inherit;
+  outline: none;
+}
+.cal-otd-date-input:hover {
+  background: var(--background-modifier-hover);
+}
+.cal-otd-date-input::-webkit-calendar-picker-indicator {
+  opacity: 0.5;
+  cursor: pointer;
+}
+.cal-otd-date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+.cal-otd-empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+/* 2-column photo wall */
+.cal-otd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 16px 16px;
+  overflow-y: auto;
+}
+.cal-otd-wall-card {
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+  background: var(--background-secondary-alt);
+}
+.cal-otd-wall-card:hover {
+  box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+.cal-otd-wall-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 8px 10px 4px;
+}
+.cal-otd-wall-photo {
+  width: 100%;
+  aspect-ratio: 1;
+  background-size: cover;
+  background-position: center top;
+}
+.cal-otd-wall-text {
+  padding: 16px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 80px;
+}
+.cal-otd-wall-text-empty {
+  font-style: italic;
+  opacity: 0.5;
+}
+.cal-otd-wall-excerpt {
+  padding: 6px 10px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+@media (max-width: 480px) {
+  .cal-otd-panel { width: 94vw; }
+  .cal-otd-grid { grid-template-columns: 1fr; }
 }
 `;
     if (!style.parentElement) {
@@ -1066,6 +1278,33 @@ const LOCALE = {
     exif_focal:          'Focal Length',
     exif_gps:            'GPS',
     exif_software:       'Software',
+    // On This Day
+    otd_title:           'On This Day',
+    otd_button:          (m,d) => `📅 ${m}/${d}`,
+    otd_emptyYear:       'No entry for this day',
+    otd_noMemories:      'No memories for this day yet',
+    otd_yearsAgo:        (n) => `${n} year${n>1?'s':''} ago`,
+    otd_emptyExcerpt:    '(no text)',
+    otd_close:           'Close',
+    otd_openNote:        'Open note',
+    otd_prev:            'Previous year',
+    otd_next:            'Next year',
+    s_otd:               'On This Day',
+    s_otdDot:            'Show markers on calendar',
+    s_otdDotDesc:        'Display a small dot on dates with past-year entries',
+    s_otdButton:         'Show sidebar button',
+    s_otdButtonDesc:     'Display an On This Day button below the weather card',
+    s_otdExcerptMode:    'Excerpt mode',
+    s_otdExcerptModeDesc:'How to generate text previews for past entries',
+    s_otdExcerptAuto:    'Auto-extract from note body',
+    s_otdExcerptFrontmatter: 'From frontmatter field',
+    s_otdExcerptNone:    'No excerpt',
+    s_otdExcerptTemplate: 'Custom template',
+    s_otdExcerptTemplateDesc: 'Use {body}, {year}, {date}, or any frontmatter key like {mood}',
+    s_otdTemplate:     'Template',
+    s_otdTemplateDesc:  'Template string for custom excerpt mode',
+    s_otdExcerptKey:     'Frontmatter field name',
+    s_otdExcerptKeyDesc: 'Which frontmatter key to read (only used in frontmatter mode)',
   },
   zh: {
     now:      '现在',
@@ -1128,6 +1367,33 @@ const LOCALE = {
     exif_focal:          '焦距',
     exif_gps:            'GPS',
     exif_software:       '软件',
+    // On This Day
+    otd_title:           '去年今日',
+    otd_button:          (m,d) => `📅 ${m}月${d}日`,
+    otd_emptyYear:       '这一天还没有记录',
+    otd_noMemories:      '还没有往年的今天',
+    otd_yearsAgo:        (n) => `${n}年前`,
+    otd_emptyExcerpt:    '（无文字内容）',
+    otd_close:           '关闭',
+    otd_openNote:        '打开笔记',
+    otd_prev:            '上一年',
+    otd_next:            '下一年',
+    s_otd:               '去年今日',
+    s_otdDot:            '日历上显示标记',
+    s_otdDotDesc:        '在有往年记录的日期格子上显示小圆点标记',
+    s_otdButton:         '显示侧边栏按钮',
+    s_otdButtonDesc:     '在天气卡片下方显示「去年今日」按钮',
+    s_otdExcerptMode:    '摘要模式',
+    s_otdExcerptModeDesc:'如何生成往年日记的文字预览',
+    s_otdExcerptAuto:    '自动提取正文',
+    s_otdExcerptFrontmatter: '从 frontmatter 字段',
+    s_otdExcerptNone:    '不显示摘要',
+    s_otdExcerptTemplate: '自定义模板',
+    s_otdExcerptTemplateDesc: '使用 {body}、{year}、{date} 或任意 frontmatter 键如 {mood}',
+    s_otdTemplate:     '模板',
+    s_otdTemplateDesc:  '自定义摘要的模板字符串',
+    s_otdExcerptKey:     'Frontmatter 字段名',
+    s_otdExcerptKeyDesc: '读取哪个 frontmatter 键（仅 frontmatter 模式下使用）',
   },
 };
 
@@ -1640,6 +1906,218 @@ class HeicCache {
 }
 
 /* ============================================================
+   Reverse Geocoder (Nominatim, free, no API key)
+   ============================================================ */
+
+class ReverseGeocoder {
+  constructor() {
+    this._cache = new Map();      // "lat,lon" → place name string
+    this._pending = new Map();    // "lat,lon" → Promise (in-flight dedup)
+    this._lastRequest = 0;        // rate limit: 1 req/s
+  }
+
+  /**
+   * Look up a human-readable place name for coordinates.
+   * Returns null if the lookup fails or has no result.
+   */
+  async lookup(lat, lon) {
+    const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+    if (this._cache.has(key)) return this._cache.get(key);
+    if (this._pending.has(key)) return this._pending.get(key);
+
+    const promise = this._doLookup(lat, lon, key);
+    this._pending.set(key, promise);
+    try {
+      const result = await promise;
+      this._cache.set(key, result);
+      return result;
+    } finally {
+      this._pending.delete(key);
+    }
+  }
+
+  async _doLookup(lat, lon, key) {
+    // Respect Nominatim's 1 req/s rate limit
+    const now = Date.now();
+    const elapsed = now - this._lastRequest;
+    if (elapsed < 1100) {
+      await new Promise(r => setTimeout(r, 1100 - elapsed));
+    }
+    this._lastRequest = Date.now();
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=12&accept-language=zh`;
+      const resp = await requestUrl({ url, headers: { 'User-Agent': 'ObsidianCalendarSidebar/1.2' } });
+      if (resp.status === 200 && resp.json) {
+        const data = resp.json;
+        // Use display_name: e.g. "广州市天河区..." 
+        // For cleaner output, prefer `address` sub-fields
+        if (data.address) {
+          const a = data.address;
+          // Build a concise label: city + district + suburb
+          const parts = [a.city || a.town || a.county, a.district || a.suburb, a.village].filter(Boolean);
+          if (parts.length > 0) return parts.join(' · ');
+          if (data.display_name) return data.display_name.split(',')[0];
+        }
+        if (data.display_name) return data.display_name.split(',')[0];
+      }
+    } catch (e) {
+      // Silently fail — just show raw coordinates
+    }
+    return null;
+  }
+
+  invalidate() { this._cache.clear(); this._pending.clear(); }
+}
+
+/* ============================================================
+   On This Day Data Provider
+   ============================================================ */
+
+class OnThisDayProvider {
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.app = plugin.app;
+    this._dateIndex = null;      // Set<"MM-DD"> of all dates that exist
+    this._otdCache = new Map();  // Map<"MM-DD", [{year, dateStr, images[], excerpt}]>
+  }
+
+  /** Build a Set of all MM-DD that have diary entries (one-time scan). */
+  async _ensureDateIndex() {
+    if (this._dateIndex) return;
+    const folderPath = this.plugin.settings.dailyFolder;
+    const folder = this.app.vault.getAbstractFileByPath(folderPath);
+    if (!(folder instanceof TFolder)) {
+      this._dateIndex = new Set();
+      return;
+    }
+    const today = new Date();
+    const thisYear = today.getFullYear();
+    const index = new Set();
+    for (const child of folder.children) {
+      if (!(child instanceof TFile) || child.extension !== 'md') continue;
+      const match = child.name.match(/^(\d{4})-(\d{2})-(\d{2})\.md$/);
+      if (!match) continue;
+      if (parseInt(match[1]) >= thisYear) continue; // skip current year
+      index.add(`${match[2]}-${match[3]}`);
+    }
+    this._dateIndex = index;
+  }
+
+  /** Quick check: does any year have a diary for this MM-DD? */
+  async hasEntries(month, day) {
+    await this._ensureDateIndex();
+    const key = `${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    return this._dateIndex.has(key);
+  }
+
+  /** Full entries for a given MM-DD (images + excerpts). */
+  async getEntries(month, day) {
+    await this._ensureDateIndex();
+    const key = `${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    if (this._otdCache.has(key)) return this._otdCache.get(key);
+
+    const folderPath = this.plugin.settings.dailyFolder;
+    const folder = this.app.vault.getAbstractFileByPath(folderPath);
+    if (!(folder instanceof TFolder)) {
+      this._otdCache.set(key, []);
+      return [];
+    }
+
+    const entries = [];
+    const today = new Date();
+    const thisYear = today.getFullYear();
+
+    for (const child of folder.children) {
+      if (!(child instanceof TFile) || child.extension !== 'md') continue;
+      const match = child.name.match(/^(\d{4})-(\d{2})-(\d{2})\.md$/);
+      if (!match) continue;
+      const year = parseInt(match[1]);
+      if (match[2] !== String(month).padStart(2,'0') || match[3] !== String(day).padStart(2,'0')) continue;
+      if (year >= thisYear) continue; // skip current year
+
+      // Extract images from metadataCache
+      const cache = this.app.metadataCache.getFileCache(child);
+      const embeds = cache?.embeds || [];
+      const images = embeds
+        .map(e => e.link)
+        .filter(link => link && IMAGE_EXTS.includes(link.split('.').pop()?.toLowerCase()));
+
+      // Extract excerpt
+      let excerpt = null;
+      const mode = this.plugin.settings.onThisDayExcerptMode;
+      if (mode === 'frontmatter') {
+        const fmKey = this.plugin.settings.onThisDayExcerptKey || 'excerpt';
+        const fm = cache?.frontmatter;
+        if (fm && fm[fmKey]) excerpt = String(fm[fmKey]).trim();
+      } else if (mode === 'template') {
+        try {
+          const content = await this.app.vault.read(child);
+          const tpl = this.plugin.settings.onThisDayExcerptTemplate || '{body}';
+          excerpt = _renderExcerptTemplate(tpl, child.name.replace(/\.md$/, ''), year, cache?.frontmatter || {}, _extractExcerpt(content));
+        } catch (e) { /* ignore read errors */ }
+      } else if (mode !== 'none') {
+        try {
+          const content = await this.app.vault.read(child);
+          excerpt = _extractExcerpt(content);
+        } catch (e) { /* ignore read errors */ }
+      }
+
+      entries.push({ year, dateStr: child.name.replace(/\.md$/, ''), images, excerpt });
+    }
+
+    // Sort descending by year (most recent first)
+    entries.sort((a, b) => b.year - a.year);
+    // Only cache non-empty results to avoid race conditions with newly created files
+    if (entries.length > 0) {
+      this._otdCache.set(key, entries);
+    }
+    return entries;
+  }
+
+  /** Invalidate cache for a specific MM-DD, or all. */
+  invalidate(mmdd) {
+    if (mmdd) {
+      this._otdCache.delete(mmdd);
+    } else {
+      this._otdCache.clear();
+      this._dateIndex = null;
+    }
+  }
+}
+
+/** Strip Markdown/wiki syntax and return first ~100 chars of plain text. */
+function _extractExcerpt(content) {
+  let text = content.replace(/^---[\s\S]*?---\n*/, ''); // YAML frontmatter
+  text = text.replace(/!\[\[.*?\]\]/g, '');               // embedded images
+  text = text.replace(/\[\[([^\]|]+)(\|[^\]]+)?\]\]/g, '$1'); // wiki links → label
+  text = text.replace(/^#{1,6}\s+/gm, '');                // headings
+  text = text.replace(/[*_~`]+/g, '');                    // bold/italic/strikethrough/code
+  text = text.replace(/={2,}/g, '');                      // highlight
+  text = text.replace(/^>\s?/gm, '');                     // blockquote
+  text = text.replace(/^\s*[-*+]\s/gm, '');               // list bullets
+  text = text.replace(/\n+/g, ' ');                       // newlines → space
+  text = text.replace(/\s{2,}/g, ' ').trim();             // collapse whitespace
+  if (text.length > 100) text = text.substring(0, 100) + '...';
+  return text || null;
+}
+
+/** Render a user-customizable excerpt template. */
+function _renderExcerptTemplate(template, dateStr, year, frontmatter, bodyText) {
+  let result = template;
+  result = result.replace(/\{body\}/g, bodyText || '');
+  result = result.replace(/\{year\}/g, String(year));
+  result = result.replace(/\{date\}/g, dateStr);
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (typeof value === 'string' || typeof value === 'number') {
+      result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
+    }
+  }
+  result = result.trim();
+  return result || null;
+}
+
+/* ============================================================
    Calendar View (ItemView)
    ============================================================ */
 class CalendarView extends ItemView {
@@ -1680,6 +2158,10 @@ class CalendarView extends ItemView {
     this.exifCache = plugin.exifCache;
     // Track processed note-image elements (cleared when view is destroyed)
     this._exifNoteImages = new WeakSet();
+    // On This Day provider
+    this._otdProvider = new OnThisDayProvider(plugin);
+    // Cache for quick dot-marker lookup: Set<"MM-DD">
+    this._otdDotCache = null;
   }
 
   getViewType()   { return VIEW_TYPE; }
@@ -1692,6 +2174,12 @@ class CalendarView extends ItemView {
 
     // Build data for current month
     await this.buildMonthCache(this.displayMonth);
+
+    // Preload On This Day date index for dot markers
+    this._otdProvider._ensureDateIndex().then(() => {
+      this._otdDotCache = this._otdProvider._dateIndex;
+      if (this.plugin.settings.onThisDayDot) this.render(); // re-render to show dots
+    });
 
     // Detect which date the user is currently viewing
     this._syncActiveDate();
@@ -1743,10 +2231,24 @@ class CalendarView extends ItemView {
         const month = parseInt(match[2]) - 1;
         const key = `${year}-${month}`;
         this.monthCache.delete(key);
+        // Invalidate OTD cache for this MM-DD
+        if (this._otdProvider) {
+          this._otdProvider.invalidate(`${match[2]}-${match[3]}`);
+          this._otdProvider._dateIndex = null; // force full reindex on next access
+        }
+        this._otdDotCache = null; // force rebuild on next render
         await this.buildMonthCache(this.displayMonth);
       } else {
         this.monthCache.delete(this._monthKey(this.displayMonth));
+        if (this._otdProvider) { this._otdProvider.invalidate(); this._otdProvider._dateIndex = null; }
+        this._otdDotCache = null;
         await this.buildMonthCache(this.displayMonth);
+      }
+      // Rebuild OTD dot cache async
+      if (this._otdProvider && this.plugin.settings.onThisDayDot) {
+        this._otdProvider._ensureDateIndex().then(() => {
+          this._otdDotCache = this._otdProvider._dateIndex;
+        });
       }
       this.render();
     }, 300);
@@ -1756,8 +2258,17 @@ class CalendarView extends ItemView {
   async refresh() {
     this.monthCache.delete(this._monthKey(this.displayMonth));
     if (this.exifCache) this.exifCache.invalidate();
+    if (this._otdProvider) this._otdProvider.invalidate();
+    this._otdDotCache = null;
     await this.buildMonthCache(this.displayMonth);
     this.render();
+    // Rebuild OTD dot cache async
+    if (this._otdProvider && this.plugin.settings.onThisDayDot) {
+      this._otdProvider._ensureDateIndex().then(() => {
+        this._otdDotCache = this._otdProvider._dateIndex;
+        this.render();
+      });
+    }
   }
 
   /* ----- Month cache key ----- */
@@ -1845,6 +2356,20 @@ class CalendarView extends ItemView {
     // --- Weather card (below header, above weekdays) ---
     this._renderWeatherCard(el);
 
+    // --- On This Day button (below weather card) ---
+    if (this.plugin.settings.onThisDayButton) {
+      const otdBtn = el.createDiv({ cls: 'cal-otd-button' });
+      const todayDate = new Date();
+      const tm = todayDate.getMonth() + 1, td = todayDate.getDate();
+      otdBtn.setText(_l(this.plugin.settings.weatherLanguage, 'otd_button', tm, td));
+      otdBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const d = new Date();
+        this.plugin.openOnThisDay(d.getMonth() + 1, d.getDate());
+      });
+    }
+
     // --- Weekday row ---
     const wd = el.createDiv({ cls: 'cal-weekdays' });
     for (const day of ['日', '一', '二', '三', '四', '五', '六']) {
@@ -1900,6 +2425,14 @@ class CalendarView extends ItemView {
         }
       }
 
+      // On This Day dot marker
+      if (this.plugin.settings.onThisDayDot && this._otdDotCache) {
+        const mmdd = `${String(month + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        if (this._otdDotCache.has(mmdd) && dateStr !== todayStr) {
+          cell.createDiv({ cls: 'cal-otd-dot' });
+        }
+      }
+
       // Date number
       const num = cell.createEl('span', { cls: 'cal-day-num', text: String(d) });
 
@@ -1932,6 +2465,21 @@ class CalendarView extends ItemView {
         this.plugin._showExifTooltip(cell, null, true);
         const fields = await this.exifCache.get(file);
         this.plugin._showExifTooltip(cell, fields, false);
+
+        // Reverse geocode GPS coordinates asynchronously
+        if (fields && this.plugin.geocoder) {
+          const gpsField = fields.find(f => f.key === 'exif_gps');
+          if (gpsField) {
+            const parts = gpsField.value.split(',').map(s => parseFloat(s.trim()));
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+              const place = await this.plugin.geocoder.lookup(parts[0], parts[1]);
+              if (place) {
+                gpsField.value = place;
+                this.plugin._showExifTooltip(cell, fields, false);
+              }
+            }
+          }
+        }
       } catch (_) {
         this.plugin._hideExifTooltip();
       }
@@ -2709,9 +3257,13 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
     containerEl.empty();
     const _s = (key, ...args) => _l(this.plugin.settings.weatherLanguage, key, ...args);
 
-    containerEl.createEl('h2', { text: 'Calendar Sidebar Settings' });
+    containerEl.createEl('h2', { text: 'Calendar Sidebar' });
 
-    // --- Daily folder with search ---
+    /* ======================
+       Section: Diary 日记
+       ====================== */
+    containerEl.createEl('h3', { text: '📓 ' + _s('s_dailyFolder') });
+
     new Setting(containerEl)
       .setName(_s('s_dailyFolder'))
       .setDesc(_s('s_dailyFolderDesc'))
@@ -2736,7 +3288,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           });
       });
 
-    // --- Thumbnail filter ---
     new Setting(containerEl)
       .setName(_s('s_thumbnailFilter'))
       .setDesc(_s('s_thumbnailFilterDesc'))
@@ -2753,8 +3304,10 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // --- Weather section ---
-    containerEl.createEl('h3', { text: _s('s_weather') });
+    /* ======================
+       Section: Weather 天气
+       ====================== */
+    containerEl.createEl('h3', { text: '🌤️ ' + _s('s_weather') });
 
     new Setting(containerEl)
       .setName(_s('s_weatherEnable'))
@@ -2770,7 +3323,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Latitude
     new Setting(containerEl)
       .setName(_s('s_latitude'))
       .setDesc(_s('s_latitudeDesc'))
@@ -2786,7 +3338,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Longitude
     new Setting(containerEl)
       .setName(_s('s_longitude'))
       .setDesc(_s('s_longitudeDesc'))
@@ -2802,7 +3353,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Location name
     new Setting(containerEl)
       .setName(_s('s_locationName'))
       .setDesc(_s('s_locationNameDesc'))
@@ -2818,7 +3368,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Units
     new Setting(containerEl)
       .setName(_s('s_tempUnits'))
       .setDesc(_s('s_tempUnitsDesc'))
@@ -2835,7 +3384,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Auto-fetch
     new Setting(containerEl)
       .setName(_s('s_autoFetch'))
       .setDesc(_s('s_autoFetchDesc'))
@@ -2848,7 +3396,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // TTL
     new Setting(containerEl)
       .setName(_s('s_cacheTtl'))
       .setDesc(_s('s_cacheTtlDesc'))
@@ -2865,7 +3412,6 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // Language
     new Setting(containerEl)
       .setName(_s('s_language'))
       .setDesc(_s('s_languageDesc'))
@@ -2877,9 +3423,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherLanguage = value;
             await this.plugin.saveSettings();
-            // Re-render settings in the new language
             this.display();
-            // Refresh views to apply new locale
             const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
             if (leaf?.view) {
               leaf.view._syncNoteOverlays();
@@ -2888,8 +3432,98 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           })
       );
 
-    // --- EXIF Metadata section ---
-    containerEl.createEl('h3', { text: _s('s_exif') });
+    /* ======================
+       Section: On This Day 去年今日
+       ====================== */
+    containerEl.createEl('h3', { text: '📅 ' + _s('s_otd') });
+
+    new Setting(containerEl)
+      .setName(_s('s_otdButton'))
+      .setDesc(_s('s_otdButtonDesc'))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.onThisDayButton)
+          .onChange(async (value) => {
+            this.plugin.settings.onThisDayButton = value;
+            await this.plugin.saveSettings();
+            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+            if (leaf?.view) leaf.view.render();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName(_s('s_otdDot'))
+      .setDesc(_s('s_otdDotDesc'))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.onThisDayDot)
+          .onChange(async (value) => {
+            this.plugin.settings.onThisDayDot = value;
+            await this.plugin.saveSettings();
+            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+            if (leaf?.view) leaf.view.refresh();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName(_s('s_otdExcerptMode'))
+      .setDesc(_s('s_otdExcerptModeDesc'))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions({
+            'auto': _s('s_otdExcerptAuto'),
+            'frontmatter': _s('s_otdExcerptFrontmatter'),
+            'template': _s('s_otdExcerptTemplate'),
+            'none': _s('s_otdExcerptNone'),
+          })
+          .setValue(this.plugin.settings.onThisDayExcerptMode)
+          .onChange(async (value) => {
+            this.plugin.settings.onThisDayExcerptMode = value;
+            await this.plugin.saveSettings();
+            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+            if (leaf?.view?._otdProvider) leaf.view._otdProvider.invalidate();
+            this.display(); // re-render to show/hide conditional fields
+          })
+      );
+
+    // Conditional: only show when 'frontmatter' is selected
+    if (this.plugin.settings.onThisDayExcerptMode === 'frontmatter') {
+      new Setting(containerEl)
+        .setName(_s('s_otdExcerptKey'))
+        .setDesc(_s('s_otdExcerptKeyDesc'))
+        .addText((text) =>
+          text
+            .setValue(this.plugin.settings.onThisDayExcerptKey || 'excerpt')
+            .onChange(async (value) => {
+              this.plugin.settings.onThisDayExcerptKey = value;
+              await this.plugin.saveSettings();
+              const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+              if (leaf?.view?._otdProvider) leaf.view._otdProvider.invalidate();
+            })
+        );
+    }
+
+    // Conditional: only show when 'template' is selected
+    if (this.plugin.settings.onThisDayExcerptMode === 'template') {
+      new Setting(containerEl)
+        .setName(_s('s_otdTemplate'))
+        .setDesc(_s('s_otdTemplateDesc'))
+        .addText((text) =>
+          text
+            .setValue(this.plugin.settings.onThisDayExcerptTemplate || '{body}')
+            .onChange(async (value) => {
+              this.plugin.settings.onThisDayExcerptTemplate = value;
+              await this.plugin.saveSettings();
+              const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+              if (leaf?.view?._otdProvider) leaf.view._otdProvider.invalidate();
+            })
+        );
+    }
+
+    /* ======================
+       Section: Other 其他
+       ====================== */
+    containerEl.createEl('h3', { text: '⚙️ ' + _s('s_exif') });
 
     new Setting(containerEl)
       .setName(_s('s_exifEnable'))
@@ -2929,6 +3563,186 @@ class FolderSuggestModal extends SuggestModal {
 
   onChooseSuggestion(folder) {
     this.onSubmit(folder.path);
+  }
+}
+
+/* ============================================================
+   On This Day Modal
+   ============================================================ */
+
+class OnThisDayModal {
+  constructor(app, plugin, provider, month, day, entries) {
+    this.app = app;
+    this.plugin = plugin;
+    this.provider = provider;
+    this.month = month;
+    this.day = day;
+    this.entries = entries || [];
+    this._onKey = this._onKeyDown.bind(this);
+  }
+
+  open() {
+    const lang = this.plugin.settings.weatherLanguage;
+
+    // Backdrop
+    this.backdrop = document.createElement('div');
+    this.backdrop.className = 'cal-otd-modal';
+    this.backdrop.addEventListener('click', (e) => {
+      if (e.target === this.backdrop) this.close();
+    });
+
+    // Panel
+    const panel = document.createElement('div');
+    panel.className = 'cal-otd-panel';
+    this.panel = panel;
+
+    // --- Header: title + date nav + close ---
+    const header = panel.createDiv({ cls: 'cal-otd-header' });
+    header.createDiv({ cls: 'cal-otd-header-title', text: _l(lang, 'otd_title') });
+
+    const nav = header.createDiv({ cls: 'cal-otd-date-nav' });
+    const prevDayBtn = nav.createDiv({ cls: 'cal-otd-nav-btn', text: '◀' });
+    prevDayBtn.addEventListener('click', (e) => { e.stopPropagation(); this._navigateDate(-1); });
+
+    const dateInput = nav.createEl('input', {
+      type: 'date',
+      cls: 'cal-otd-date-input',
+      attr: { 'aria-label': 'Choose date' },
+    });
+    dateInput.value = `${new Date().getFullYear()}-${String(this.month).padStart(2,'0')}-${String(this.day).padStart(2,'0')}`;
+    dateInput.addEventListener('change', () => {
+      const parts = dateInput.value.split('-');
+      if (parts.length === 3) {
+        this.month = parseInt(parts[1]);
+        this.day = parseInt(parts[2]);
+        this._navigateDate(0); // refetch current date
+      }
+    });
+    this.dateInput = dateInput;
+
+    const nextDayBtn = nav.createDiv({ cls: 'cal-otd-nav-btn', text: '▶' });
+    nextDayBtn.addEventListener('click', (e) => { e.stopPropagation(); this._navigateDate(1); });
+
+    const closeBtn = header.createDiv({ cls: 'cal-otd-close', text: '\u2715' });
+    closeBtn.addEventListener('click', () => this.close());
+
+    // --- Grid body ---
+    this.bodyEl = panel.createDiv({ cls: 'cal-otd-grid' });
+
+    // Empty state or content
+    if (this.entries.length === 0) {
+      const emptyMsg = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
+      emptyMsg.setText(_l(lang, 'otd_noMemories'));
+    } else {
+      this._renderGrid();
+    }
+
+    this.backdrop.appendChild(panel);
+    document.body.appendChild(this.backdrop);
+    document.addEventListener('keydown', this._onKey);
+  }
+
+  close() {
+    document.removeEventListener('keydown', this._onKey);
+    if (this.backdrop && this.backdrop.parentElement) {
+      this.backdrop.parentElement.removeChild(this.backdrop);
+    }
+  }
+
+  _onKeyDown(e) {
+    if (e.key === 'Escape') { this.close(); }
+    else if (e.key === 'ArrowLeft') { this._navigateDate(-1); }
+    else if (e.key === 'ArrowRight') { this._navigateDate(1); }
+  }
+
+  async _navigateDate(delta) {
+    if (!this.provider) return;
+
+    // Compute new date
+    const d = new Date(2026, this.month - 1, this.day + delta);
+    this.month = d.getMonth() + 1;
+    this.day = d.getDate();
+
+    // Update label
+    const lang = this.plugin.settings.weatherLanguage;
+    if (this.dateInput) {
+      this.dateInput.value = `${new Date().getFullYear()}-${String(this.month).padStart(2,'0')}-${String(this.day).padStart(2,'0')}`;
+    }
+
+    // Show loading
+    this.bodyEl.empty();
+    const loadingEl = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
+    loadingEl.setText(_l(lang, 'loading'));
+
+    // Fetch
+    try {
+      this.entries = await this.provider.getEntries(this.month, this.day);
+      this.bodyEl.empty();
+      if (this.entries.length === 0) {
+        const emptyMsg = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
+        emptyMsg.setText(_l(lang, 'otd_noMemories'));
+      } else {
+        this._renderGrid();
+      }
+    } catch (e) {
+      this.bodyEl.empty();
+      const errEl = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
+      errEl.setText(_l(lang, 'unavailable'));
+    }
+  }
+
+  _renderGrid() {
+    this.bodyEl.empty();
+    const lang = this.plugin.settings.weatherLanguage;
+
+    for (const entry of this.entries) {
+      const card = this.bodyEl.createDiv({ cls: 'cal-otd-wall-card' });
+
+      // Year badge
+      const badge = card.createDiv({ cls: 'cal-otd-wall-badge' });
+      badge.setText(_l(lang, 'otd_yearsAgo', new Date().getFullYear() - entry.year) + `  ·  ${entry.year}`);
+
+      // Photo or text block
+      if (entry.images && entry.images.length > 0) {
+        const photo = card.createDiv({ cls: 'cal-otd-wall-photo' });
+        this._setPhotoBackground(photo, entry.images[0], entry.dateStr);
+      } else if (entry.excerpt) {
+        // Text-only preview when diary has no images but does have excerpt
+        const textBlock = card.createDiv({ cls: 'cal-otd-wall-text' });
+        textBlock.setText(entry.excerpt);
+      }
+      // If no image AND no excerpt → compact card with just the year badge
+
+      // Excerpt below photo
+      if (entry.images && entry.images.length > 0 && entry.excerpt) {
+        card.createDiv({ cls: 'cal-otd-wall-excerpt', text: entry.excerpt });
+      }
+
+      // Click to open the note
+      card.addEventListener('click', () => {
+        this.close();
+        this.app.workspace.openLinkText(entry.dateStr, this.plugin.settings.dailyFolder, false);
+      });
+    }
+  }
+
+  _setPhotoBackground(bgEl, imageLink, dateStr) {
+    try {
+      const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
+      const file = this.app.metadataCache.getFirstLinkpathDest(imageLink, sourcePath);
+      if (!file) return;
+      const ext = file.extension.toLowerCase();
+      if (['heic', 'heif'].includes(ext) && this.plugin.heicCache) {
+        this.plugin.heicCache.getThumbnail(file).then((result) => {
+          if (result && bgEl.isConnected) {
+            bgEl.style.backgroundImage = `url(${result.dataUrl})`;
+          }
+        });
+      } else {
+        const url = this.app.vault.getResourcePath(file);
+        bgEl.style.backgroundImage = `url(${url})`;
+      }
+    } catch (e) { /* silently fail */ }
   }
 }
 

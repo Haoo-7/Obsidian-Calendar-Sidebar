@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 (2026-07-18)
+
+### Added
+- **On This Day (去年今日)**: Browse past years' diary entries from the same calendar date. Visual-driven modal with year cards showing photos and excerpts.
+- **Calendar cell markers**: Small accent dots on dates that have entries from previous years (toggleable in settings).
+- **Sidebar button**: Quick-access "On This Day" button below the weather card (toggleable in settings).
+- **Command palette**: `Open On This Day / 打开去年今日` command.
+- **Excerpt modes**: Three options — auto-extract from note body, read from frontmatter field, or disable entirely.
+- **OnThisDayProvider**: Efficient data layer that scans all diary files once to build a date index, with per-MM-DD caching and automatic invalidation on file changes.
+
+### 新增
+- **去年今日**: 翻阅往年同一天的日记照片和摘要。毛玻璃弹窗，每年一张卡片，左右翻页浏览。
+- **日历格子标记**: 有往年记录的日期右下角显示小圆点标记（可在设置中关闭）。
+- **侧边栏按钮**: 天气卡片下方的一键「去年今日」按钮（可在设置中关闭）。
+- **命令面板**: `Open On This Day / 打开去年今日` 命令。
+- **摘要模式**: 三种选项——自动提取正文、读取 frontmatter 字段、不显示摘要。
+
 ## 1.1.0 (2026-07-18)
 
 ### Added
