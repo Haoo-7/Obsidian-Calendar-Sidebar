@@ -19,7 +19,12 @@ DayOne-style monthly calendar panel in the Obsidian left sidebar. / DayOne é£Žæ 
 - Auto-create missing notes with confirmation dialog, from Daily Notes template (Templater supported)
 - Configurable daily folder with search suggest
 - Thumbnail filter: all images or date-prefixed only
-- Weather card with Open-Meteo integration (optional, hidden YAML snapshots)
+- Weather card with Open-Meteo integration (optional, cached in plugin data)
+- EXIF metadata tooltips for calendar and daily-note images
+- HEIC/HEIF thumbnail conversion on desktop
+- On This Day review with excerpts and photo wall
+
+Weather snapshots are stored in the plugin's `data.json`, not written into daily-note frontmatter. Historical `_calendar_weather` frontmatter is read for backward compatibility and migrated when compatible. EXIF GPS reverse geocoding is disabled by default and can be enabled explicitly in settings.
 
 **Installation**: Add `Haoo-7/Obsidian-Calendar-Sidebar` to BRAT, or download `calendar-sidebar.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Calendar-Sidebar/releases) and extract to `.obsidian/plugins/calendar-sidebar/`.
 

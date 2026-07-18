@@ -1,0 +1,19 @@
+{
+  "name": "calendar-sidebar",
+  "private": true,
+  "version": "1.2.0",
+  "description": "Calendar Sidebar Obsidian plugin source and test tooling",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

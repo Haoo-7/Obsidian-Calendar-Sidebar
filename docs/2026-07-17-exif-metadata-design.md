@@ -1,12 +1,12 @@
 # EXIF Metadata Display - Design Spec
 
 **Date**: 2026-07-17
-**Status**: Approved
+**Status**: Implemented and hardened
 **Plugin**: calendar-sidebar/main.js
 
 ## Overview
 
-Add EXIF metadata reading and display for images embedded in daily notes. Phase 1: read-only EXIF extraction + hover tooltip. HEIC conversion deferred to Phase 2.
+Add EXIF metadata reading and display for images embedded in daily notes. The implementation now includes HEIC display, safe text-only tooltip rendering, and opt-in GPS reverse geocoding.
 
 ## Architecture
 
@@ -47,7 +47,7 @@ ImageMetadataCache
 | gps | GPSLatitude/GPSLongitude | GPS | exifr tag (raw coords) |
 | software | Software | 软件 | exifr tag |
 
-GPS displays raw coordinates only. Reverse geocoding deferred (needs API key).
+GPS displays raw coordinates by default. Reverse geocoding is opt-in and uses Nominatim only after the user enables it.
 
 ### Tooltip
 
@@ -62,6 +62,8 @@ GPS displays raw coordinates only. Reverse geocoding deferred (needs API key).
 
 One toggle: `showExif` (boolean, default true)
 
+GPS reverse geocoding is controlled separately by `exifReverseGeocode` and defaults to false.
+
 ```
 ☑ Show image EXIF metadata
    Display camera settings and capture info on hover
@@ -73,6 +75,7 @@ One toggle: `showExif` (boolean, default true)
 - Cache persists across month switches
 - Memory: ~500 bytes per cached image (negligible)
 - Cache invalidated on file modify via existing `_onFileChanged` hook
+- Tooltip values are rendered as text nodes and are never interpreted as HTML
 
 ## Changes Required
 
@@ -89,12 +92,12 @@ One toggle: `showExif` (boolean, default true)
 
 ## Dependencies
 
-- `exifr` (lite bundle, 45KB minified): EXIF parsing for JPEG, HEIC, PNG, TIFF
+- The release uses the bundled zero-dependency parser for JPEG, PNG, WebP and HEIC.
 - No native addons, pure JS, compatible with Obsidian's Electron runtime
 
 ## Out of Scope (Phase 2)
 
-- HEIC to JPEG conversion
-- GPS reverse geocoding
+- ~~HEIC to JPEG conversion~~ (implemented)
+- ~~GPS reverse geocoding~~ (implemented as an opt-in feature)
 - Batch EXIF extraction
 - Persistent disk cache

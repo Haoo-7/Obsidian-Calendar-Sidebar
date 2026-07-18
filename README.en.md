@@ -34,7 +34,9 @@ Enable weather data from [Open-Meteo](https://open-meteo.com/) (no API key neede
 | **Auto-fetch** | Fetch when opening a daily note |
 | **Cache TTL** | Hours before re-fetching |
 
-Weather snapshots are saved as hidden YAML frontmatter (`_calendar_weather`) in daily notes — never visible in the rendered note. A compact weather card appears below the month header showing icon, temperature, feels-like, humidity, and location. Cached dates show a small weather emoji badge on the calendar grid. Use the **"Refresh Weather for Active Date"** command to force-update.
+Weather snapshots are stored in the plugin's `data.json`, keyed by date and weather configuration. Existing `_calendar_weather` frontmatter is read for backward compatibility and migrated when its coordinates and units match the current settings. A compact weather card appears below the month header showing icon, temperature, feels-like, humidity, and location. Cached dates show a small weather badge on the calendar grid. Open-Meteo requests use the location's automatic timezone. Use the **"Refresh Weather for Active Date"** command to force-update.
+
+EXIF GPS reverse geocoding is disabled by default. Enable **Resolve GPS locations** only if you want coordinates sent to OpenStreetMap Nominatim to display place names.
 
 **Limitation**: Historical dates beyond the forecast window may return no data (archive API support is best-effort).
 
@@ -48,7 +50,11 @@ Weather snapshots are saved as hidden YAML frontmatter (`_calendar_weather`) in 
 | File | Description |
 |------|-------------|
 | `manifest.json` | Plugin metadata |
-| `main.js` | Core code (~870 lines, zero external dependencies) |
+| `main.js` | Obsidian release artifact |
+| `src/` | TypeScript core modules used by tests and the build facade |
+| `tests/` | Unit tests for date, cache, excerpt, and safe DOM logic |
+| `build.mjs` | esbuild release build |
+| `libheif-bundle.js` | HEIC/HEIF decoder bundle |
 | `Calendar Sidebar 插件设计方案.md` | Original design doc (Chinese) |
 
 ## Settings
@@ -59,6 +65,7 @@ Configured in Obsidian Settings → Community Plugins → Calendar Sidebar:
 |---------|-------------|
 | **Daily notes folder** | Path to your daily notes folder (search + browse) |
 | **Thumbnail filter** | `All embedded images` (default) or `Only date-prefixed` (filenames starting with `YYYY-MM-DD_`) |
+| **Resolve GPS locations** | Opt-in reverse geocoding of EXIF GPS coordinates through OpenStreetMap Nominatim |
 
 ## Templater Integration
 

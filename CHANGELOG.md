@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Prevented EXIF metadata from being interpreted as HTML in the shared tooltip.
+- Fixed stale On This Day results after daily-note edits.
+- Fixed date-prefixed thumbnails inside asset subfolders.
+- Fixed weather overlay icons not loading on first render.
+- Fixed stale weather cache reuse after location, unit, or timezone changes.
+- Fixed local-date/weather timezone mismatches and stale async UI updates.
+
+### Changed
+- Added serialized plugin-data writes and unload flushing for weather cache updates.
+- Added an opt-in setting for EXIF GPS reverse geocoding.
+- Added TypeScript core modules, Vitest tests, and an esbuild build facade.
+
 ## 1.2.0 (2026-07-18)
 
 ### Added

@@ -22,9 +22,11 @@ const DEFAULT_SETTINGS = {
   weatherUnits: 'metric', // 'metric' | 'imperial'
   weatherAutoFetch: true, // auto-fetch weather when opening a daily note
   weatherTtlHours: 2,     // cache TTL in hours before re-fetch
+  weatherTimezone: 'auto', // Open-Meteo timezone mode
   weatherLanguage: 'zh',  // 'en' | 'zh' — display language for weather labels
   // --- EXIF metadata ---
   showExif: true,         // show EXIF metadata tooltip on image hover
+  exifReverseGeocode: false, // never send GPS coordinates unless explicitly enabled
   // --- On This Day settings ---
   onThisDayDot: false,    // show accent dots on cells with past-year entries
   onThisDayButton: true,  // show sidebar button to open On This Day modal
@@ -35,6 +37,11 @@ const DEFAULT_SETTINGS = {
 
 class CalendarSidebarPlugin extends Plugin {
   async onload() {
+    this._dataWriteQueue = Promise.resolve();
+    this._weatherSaveTimer = null;
+    this._weatherCleanupTimer = null;
+    this._exifHoverToken = 0;
+    this._otdRequestToken = 0;
     await this.loadSettings();
 
     // Load styles (manually installed plugins don't auto-load styles.css)
@@ -124,8 +131,17 @@ class CalendarSidebarPlugin extends Plugin {
   }
 
   /** Remove all note overlays and clear state on unload. */
-  onunload() {
+  async onunload() {
+    clearTimeout(this._weatherSaveTimer);
+    clearTimeout(this._weatherCleanupTimer);
+    clearTimeout(this._exifHoverTimer);
+    this._exifHoverToken++;
+    await this._flushWeatherCache();
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
     this._removeAllOverlays();
+    this._exifTooltipEl?.remove();
+    this._exifTooltipEl = null;
+    document.getElementById('calendar-sidebar-styles')?.remove();
   }
 
   /** Remove all overlay elements from markdown view containers. */
@@ -158,8 +174,12 @@ class CalendarSidebarPlugin extends Plugin {
     const calendarLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     const provider = calendarLeaf?.view?._otdProvider;
     if (!provider) return;
+    const token = ++this._otdRequestToken;
     provider.getEntries(month, day).then((entries) => {
+      if (token !== this._otdRequestToken) return;
       new OnThisDayModal(this.app, this, provider, month, day, entries).open();
+    }).catch((err) => {
+      console.warn('[CalendarSidebar] On This Day load failed:', err.message);
     });
   }
 
@@ -175,19 +195,31 @@ class CalendarSidebarPlugin extends Plugin {
 
   _showExifTooltip(anchorEl, fields, loading) {
     const tip = this._exifTooltipEl;
-    if (!tip) return;
+    if (!tip || !anchorEl?.isConnected) return;
     const lang = this.settings.weatherLanguage;
+    tip.replaceChildren();
+
+    const addText = (tag, className, value) => {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      el.textContent = String(value ?? '');
+      return el;
+    };
 
     if (loading) {
-      tip.innerHTML = `<div class="cal-exif-tooltip-loading">${_l(lang, 'exif_loading')}</div>`;
+      tip.appendChild(addText('div', 'cal-exif-tooltip-loading', _l(lang, 'exif_loading')));
     } else if (!fields || fields.length === 0) {
-      tip.innerHTML = `<div class="cal-exif-tooltip-empty"><div>${_l(lang, 'exif_noData')}</div><div style="font-size:10px;margin-top:2px">${_l(lang, 'exif_noDataDesc')}</div></div>`;
+      const empty = addText('div', 'cal-exif-tooltip-empty', '');
+      empty.appendChild(addText('div', '', _l(lang, 'exif_noData')));
+      empty.appendChild(addText('div', 'cal-exif-tooltip-description', _l(lang, 'exif_noDataDesc')));
+      tip.appendChild(empty);
     } else {
-      let html = '';
       for (const f of fields) {
-        html += `<div class="cal-exif-tooltip-row"><span class="cal-exif-tooltip-label">${_l(lang, f.key)}</span><span class="cal-exif-tooltip-value">${f.value}</span></div>`;
+        const row = addText('div', 'cal-exif-tooltip-row', '');
+        row.appendChild(addText('span', 'cal-exif-tooltip-label', _l(lang, f.key)));
+        row.appendChild(addText('span', 'cal-exif-tooltip-value', f.value));
+        tip.appendChild(row);
       }
-      tip.innerHTML = html;
     }
 
     const rect = anchorEl.getBoundingClientRect();
@@ -208,6 +240,22 @@ class CalendarSidebarPlugin extends Plugin {
     if (this._exifTooltipEl) this._exifTooltipEl.classList.remove('is-visible');
   }
 
+  _beginExifHover() {
+    clearTimeout(this._exifHoverTimer);
+    this._hideExifTooltip();
+    return ++this._exifHoverToken;
+  }
+
+  _isCurrentExifHover(token) {
+    return token === this._exifHoverToken;
+  }
+
+  _endExifHover() {
+    clearTimeout(this._exifHoverTimer);
+    this._exifHoverToken++;
+    this._hideExifTooltip();
+  }
+
   async loadSettings() {
     const data = await this.loadData() || {};
     // Extract weather cache separately so it doesn't get overwritten by saveSettings
@@ -219,22 +267,43 @@ class CalendarSidebarPlugin extends Plugin {
   }
 
   async saveSettings() {
-    // Preserve weather cache when saving settings
-    const data = await this.loadData() || {};
-    const merged = Object.assign({}, data, this.settings);
-    merged.weatherCache = this.weatherCache || {};
-    await this.saveData(merged);
+    const settings = { ...this.settings };
+    await this._enqueueDataWrite((data) => {
+      Object.assign(data, settings);
+      data.weatherCache = this.weatherCache || {};
+    });
   }
 
   /** Save weather cache without touching settings. Debounced to avoid excessive writes. */
   _saveWeatherCache() {
     if (this._weatherSaveTimer) clearTimeout(this._weatherSaveTimer);
-    this._weatherSaveTimer = setTimeout(async () => {
-      const data = await this.loadData() || {};
-      data.weatherCache = this.weatherCache || {};
-      await this.saveData(data);
-      this._cleanupWeatherCache();
+    this._weatherSaveTimer = setTimeout(() => {
+      this._weatherSaveTimer = null;
+      this._flushWeatherCache().catch((err) => {
+        console.warn('[CalendarSidebar] Weather cache save failed:', err.message);
+      });
     }, 2000); // debounce 2s
+  }
+
+  _enqueueDataWrite(mutator) {
+    this._dataWriteQueue = (this._dataWriteQueue || Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        const data = await this.loadData() || {};
+        await mutator(data);
+        await this.saveData(data);
+      });
+    return this._dataWriteQueue;
+  }
+
+  _flushWeatherCache() {
+    if (this._weatherSaveTimer) {
+      clearTimeout(this._weatherSaveTimer);
+      this._weatherSaveTimer = null;
+    }
+    return this._enqueueDataWrite((data) => {
+      data.weatherCache = this.weatherCache || {};
+    });
   }
 
   /** Remove cache entries older than 90 days. */
@@ -244,7 +313,8 @@ class CalendarSidebarPlugin extends Plugin {
     let removed = 0;
     for (const [key, entry] of Object.entries(this.weatherCache)) {
       if (entry && entry.fetchedAt) {
-        if (new Date(entry.fetchedAt).getTime() < cutoff) {
+        const timestamp = new Date(entry.fetchedAt).getTime();
+        if (!Number.isFinite(timestamp) || timestamp < cutoff) {
           delete this.weatherCache[key];
           removed++;
         }
@@ -252,10 +322,10 @@ class CalendarSidebarPlugin extends Plugin {
     }
     if (removed > 0) {
       // Schedule cleanup persist (no urgency)
-      setTimeout(async () => {
-        const data = await this.loadData() || {};
-        data.weatherCache = this.weatherCache;
-        await this.saveData(data);
+      clearTimeout(this._weatherCleanupTimer);
+      this._weatherCleanupTimer = setTimeout(() => {
+        this._weatherCleanupTimer = null;
+        this._saveWeatherCache();
       }, 5000);
     }
   }
@@ -437,6 +507,10 @@ class CalendarSidebarPlugin extends Plugin {
   color: rgba(255, 255, 255, 0.45);
   text-align: center;
   font-size: 11px;
+}
+.cal-exif-tooltip-description {
+  font-size: 10px;
+  margin-top: 2px;
 }
 
 /* --- Weather card --- */
@@ -820,6 +894,9 @@ button.cal-weather-refresh:hover {
     // 1. De-duplicate: reveal existing leaf if already open
     const existing = workspace.getLeavesOfType(VIEW_TYPE);
     if (existing.length > 0) {
+      for (const duplicate of existing.slice(1)) {
+        workspace.detachLeaf(duplicate);
+      }
       workspace.revealLeaf(existing[0]);
       return;
     }
@@ -919,6 +996,49 @@ function _validateCoords(lat, lng) {
   );
 }
 
+function _weatherConfigKey(settings) {
+  const lat = parseFloat(settings.weatherLatitude);
+  const lng = parseFloat(settings.weatherLongitude);
+  return JSON.stringify({
+    latitude: Number.isFinite(lat) ? Number(lat.toFixed(6)) : null,
+    longitude: Number.isFinite(lng) ? Number(lng.toFixed(6)) : null,
+    units: settings.weatherUnits === 'imperial' ? 'imperial' : 'metric',
+    timezone: settings.weatherTimezone || 'auto',
+  });
+}
+
+function _snapshotMatchesWeatherConfig(snapshot, settings) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  const expected = _weatherConfigKey(settings);
+  if (snapshot.configKey === expected) {
+    _normalizeSnapshotLocation(snapshot, settings);
+    return true;
+  }
+
+  // Migrate snapshots written before configKey existed when their location and
+  // unit metadata prove they belong to the current weather configuration.
+  const lat = parseFloat(settings.weatherLatitude);
+  const lng = parseFloat(settings.weatherLongitude);
+  const snapshotLat = parseFloat(snapshot.latitude);
+  const snapshotLng = parseFloat(snapshot.longitude);
+  const sameLocation = Number.isFinite(snapshotLat) && Number.isFinite(snapshotLng)
+    && Math.abs(snapshotLat - lat) < 0.000001
+    && Math.abs(snapshotLng - lng) < 0.000001;
+  const sameUnits = snapshot.units === (settings.weatherUnits === 'imperial' ? 'imperial' : 'metric');
+  if (sameLocation && sameUnits) {
+    snapshot.configKey = expected;
+    _normalizeSnapshotLocation(snapshot, settings);
+    return true;
+  }
+  return false;
+}
+
+function _normalizeSnapshotLocation(snapshot, settings) {
+  const lat = parseFloat(settings.weatherLatitude);
+  const lng = parseFloat(settings.weatherLongitude);
+  snapshot.location = settings.weatherLocationName || `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 /**
  * WeatherService — handles Open-Meteo API calls and frontmatter snapshot persistence.
  * Singleton shared across CalendarView instances.
@@ -942,15 +1062,17 @@ class WeatherService {
     if (!s.weatherEnabled) return null;
     if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) return null;
 
-    // Return existing in-flight promise to deduplicate concurrent calls
-    if (this._inFlight.has(dateStr)) {
-      return this._inFlight.get(dateStr);
+    const requestKey = `${dateStr}|${this._configKey()}`;
+    // Return existing in-flight promise to deduplicate concurrent calls for
+    // the same date and weather configuration.
+    if (this._inFlight.has(requestKey)) {
+      return this._inFlight.get(requestKey);
     }
 
     const promise = this._fetchOrUseCached(dateStr).finally(() => {
-      this._inFlight.delete(dateStr);
+      if (this._inFlight.get(requestKey) === promise) this._inFlight.delete(requestKey);
     });
-    this._inFlight.set(dateStr, promise);
+    this._inFlight.set(requestKey, promise);
     return promise;
   }
 
@@ -960,14 +1082,40 @@ class WeatherService {
     // Memory cache record shape: { snapshot, cachedAt }
     if (record && typeof record === 'object' && 'cachedAt' in record) {
       if (!record.cachedAt) return true;
-      const ageMs = Date.now() - new Date(record.cachedAt).getTime();
+      const timestamp = new Date(record.cachedAt).getTime();
+      if (!Number.isFinite(timestamp)) return true;
+      const ageMs = Date.now() - timestamp;
       return ageMs > ttlHours * 60 * 60 * 1000;
     }
     // Frontmatter snapshot shape: { fetchedAt, ...weather fields }
     if (!record) return true;
     if (!record.fetchedAt) return true;
-    const ageMs = Date.now() - new Date(record.fetchedAt).getTime();
+    const timestamp = new Date(record.fetchedAt).getTime();
+    if (!Number.isFinite(timestamp)) return true;
+    const ageMs = Date.now() - timestamp;
     return ageMs > ttlHours * 60 * 60 * 1000;
+  }
+
+  _configKey() {
+    return _weatherConfigKey(this.plugin.settings);
+  }
+
+  isSnapshotCompatible(snapshot) {
+    return _snapshotMatchesWeatherConfig(snapshot, this.plugin.settings);
+  }
+
+  getCachedSnapshot(dateStr) {
+    const entry = this.plugin.weatherCache?.[dateStr];
+    if (entry && this.isSnapshotCompatible(entry)) return entry;
+
+    const path = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
+    const existingFile = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (existingFile instanceof TFile) {
+      const cache = this.plugin.app.metadataCache.getFileCache(existingFile);
+      const snap = cache?.frontmatter?._calendar_weather;
+      if (snap && this.isSnapshotCompatible(snap)) return snap;
+    }
+    return null;
   }
 
   /** Fetch from Open-Meteo or return cached snapshot from plugin data. */
@@ -981,7 +1129,7 @@ class WeatherService {
 
     // Helper to normalize icon field (migrate emoji → .svg filename)
     const _normIcon = (entry) => {
-      if (entry && entry.icon && !entry.icon.endsWith('.svg') && entry.weatherCode != null) {
+      if (entry && typeof entry.icon === 'string' && !entry.icon.endsWith('.svg') && entry.weatherCode != null) {
         const wmo = _lookupWmo(entry.weatherCode);
         entry.icon = wmo.icon;
       }
@@ -989,7 +1137,7 @@ class WeatherService {
 
     // 1. Check weatherCache in plugin data.json (new storage)
     const cacheEntry = this.plugin.weatherCache?.[dateStr];
-    if (cacheEntry && cacheEntry.fetchedAt && !this._shouldFetch(cacheEntry, ttlHours)) {
+    if (cacheEntry && this.isSnapshotCompatible(cacheEntry) && cacheEntry.fetchedAt && !this._shouldFetch(cacheEntry, ttlHours)) {
       _normIcon(cacheEntry);
       return cacheEntry;
     }
@@ -1000,7 +1148,7 @@ class WeatherService {
     if (existingFile instanceof TFile) {
       const cache = this.plugin.app.metadataCache.getFileCache(existingFile);
       const snap = cache?.frontmatter?._calendar_weather;
-      if (snap && typeof snap === 'object' && !this._shouldFetch(snap, ttlHours)) {
+      if (snap && typeof snap === 'object' && this.isSnapshotCompatible(snap) && !this._shouldFetch(snap, ttlHours)) {
         _normIcon(snap);
         this.plugin.weatherCache = this.plugin.weatherCache || {};
         this.plugin.weatherCache[dateStr] = { ...snap };
@@ -1011,7 +1159,7 @@ class WeatherService {
 
     // 3. Memory cache (for dates without diary files)
     const cachedRecord = this._memoryCache.get(dateStr);
-    if (cachedRecord && !this._shouldFetch(cachedRecord, ttlHours)) {
+    if (cachedRecord && cachedRecord.configKey === this._configKey() && !this._shouldFetch(cachedRecord, ttlHours)) {
       return cachedRecord.snapshot;
     }
 
@@ -1019,7 +1167,7 @@ class WeatherService {
     const weather = await this._fetchFromOpenMeteo(lat, lng, dateStr, units, locationName);
     if (!weather) {
       // Cache a null-result record so we don't hammer the API for missing notes
-      this._memoryCache.set(dateStr, { snapshot: null, cachedAt: new Date().toISOString() });
+      this._memoryCache.set(dateStr, { snapshot: null, cachedAt: new Date().toISOString(), configKey: this._configKey() });
       return null;
     }
 
@@ -1027,24 +1175,22 @@ class WeatherService {
     await this._persistSnapshot(dateStr, weather);
 
     // Also cache in memory for subsequent calls on non-existent files
-    this._memoryCache.set(dateStr, { snapshot: weather, cachedAt: new Date().toISOString() });
+    this._memoryCache.set(dateStr, { snapshot: weather, cachedAt: new Date().toISOString(), configKey: this._configKey() });
 
     return weather;
   }
 
   /** Call Open-Meteo API for current + forecast data. */
   async _fetchFromOpenMeteo(lat, lng, dateStr, units, locationName) {
-    const targetDate = new Date(dateStr + 'T00:00:00Z');
-    const now = new Date();
-    now.setUTCHours(0, 0, 0, 0);
-    const isToday = targetDate.getTime() === now.getTime();
+    const isToday = dateStr === _formatDate(new Date());
+    const timezone = this.plugin.settings.weatherTimezone || 'auto';
 
     // Build daily params
     const dailyParams = new URLSearchParams({
       latitude: String(lat),
       longitude: String(lng),
       daily: 'temperature_2m_max,temperature_2m_min,weathercode,relative_humidity_2m_max,apparent_temperature_max',
-      timezone: 'UTC',
+      timezone,
       start_date: dateStr,
       end_date: dateStr,
     });
@@ -1064,7 +1210,7 @@ class WeatherService {
         longitude: String(lng),
         current: 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code',
         daily: 'temperature_2m_max,temperature_2m_min,weathercode,relative_humidity_2m_max,apparent_temperature_max',
-        timezone: 'UTC',
+        timezone,
         start_date: dateStr,
         end_date: dateStr,
       });
@@ -1078,7 +1224,7 @@ class WeatherService {
       baseUrl = 'https://api.open-meteo.com/v1/forecast';
       url = `${baseUrl}?${combinedParams.toString()}`;
     } else {
-      baseUrl = targetDate < now ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
+      baseUrl = dateStr < _formatDate(new Date()) ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
       url = `${baseUrl}?${dailyParams.toString()}`;
     }
 
@@ -1136,6 +1282,7 @@ class WeatherService {
           low: low,
           temperatureLabel: 'Now',
           units: units,
+          configKey: this._configKey(),
         };
       }
     }
@@ -1188,16 +1335,16 @@ class WeatherService {
       low: typeof tempMin === 'number' ? tempMin : null,
       temperatureLabel: 'High',
       units: units,
+      configKey: this._configKey(),
     };
   }
 
   /** Fetch only daily data (for non-today dates or fallback). */
   async _dailyOnlyFetch(lat, lng, dateStr, params, units) {
     const baseUrl = (() => {
-      const targetDate = new Date(dateStr + 'T00:00:00Z');
-      const now = new Date();
-      now.setUTCHours(0, 0, 0, 0);
-      return targetDate < now ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
+      return dateStr < _formatDate(new Date())
+        ? 'https://archive-api.open-meteo.com/v1/archive'
+        : 'https://api.open-meteo.com/v1/forecast';
     })();
 
     const url = `${baseUrl}?${params.toString()}`;
@@ -1212,8 +1359,9 @@ class WeatherService {
 
   /** Persist weather snapshot to plugin data (no more YAML pollution). */
   async _persistSnapshot(dateStr, weather) {
+    if (weather?.configKey && weather.configKey !== this._configKey()) return;
     if (!this.plugin.weatherCache) this.plugin.weatherCache = {};
-    this.plugin.weatherCache[dateStr] = { ...weather };
+    this.plugin.weatherCache[dateStr] = { ...weather, configKey: this._configKey() };
     this.plugin._saveWeatherCache();
   }
 
@@ -1223,8 +1371,11 @@ class WeatherService {
     if (!s.weatherEnabled) return null;
     if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) return null;
 
-    // Clear any in-flight promise for this date
-    this._inFlight.delete(dateStr);
+    // Clear in-flight promises for this date. Their completion handlers are
+    // guarded so they cannot delete or overwrite a newer request.
+    for (const key of this._inFlight.keys()) {
+      if (key.startsWith(`${dateStr}|`)) this._inFlight.delete(key);
+    }
 
     const lat = parseFloat(s.weatherLatitude);
     const lng = parseFloat(s.weatherLongitude);
@@ -1233,12 +1384,12 @@ class WeatherService {
 
     const weather = await this._fetchFromOpenMeteo(lat, lng, dateStr, units, locationName);
     if (!weather) {
-      this._memoryCache.set(dateStr, { snapshot: null, cachedAt: new Date().toISOString() });
+      this._memoryCache.set(dateStr, { snapshot: null, cachedAt: new Date().toISOString(), configKey: this._configKey() });
       return null;
     }
 
     // Update memory cache immediately so UI can read it without waiting on persistence
-    this._memoryCache.set(dateStr, { snapshot: weather, cachedAt: new Date().toISOString() });
+    this._memoryCache.set(dateStr, { snapshot: weather, cachedAt: new Date().toISOString(), configKey: this._configKey() });
 
     // Persist to frontmatter asynchronously — fire-and-forget with error handling
     this._persistSnapshot(dateStr, weather).catch((err) => {
@@ -1250,16 +1401,9 @@ class WeatherService {
 
   /** Check if a date has a valid cached snapshot (for badge display). */
   hasCachedSnapshot(dateStr) {
-    const s = this.plugin.settings;
-    if (!s.weatherEnabled) return false;
+    if (!this.plugin.settings.weatherEnabled) return false;
     // Check new weatherCache first
-    if (this.plugin.weatherCache?.[dateStr]) return true;
-    // Fallback: check legacy frontmatter
-    const path = `${s.dailyFolder}/${dateStr}.md`;
-    const existingFile = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!(existingFile instanceof TFile)) return false;
-    const cache = this.plugin.app.metadataCache.getFileCache(existingFile);
-    return !!cache?.frontmatter?._calendar_weather;
+    return !!this.getCachedSnapshot(dateStr);
   }
 
   /** Bulk-fetch weather for a list of dates with 2s delay between requests. */
@@ -1269,7 +1413,7 @@ class WeatherService {
     for (const dateStr of dateStrs) {
       // Skip if already cached and not stale
       const entry = this.plugin.weatherCache?.[dateStr];
-      if (entry && entry.fetchedAt && !this._shouldFetch(entry, this.plugin.settings.weatherTtlHours || 2)) {
+      if (entry && this.isSnapshotCompatible(entry) && entry.fetchedAt && !this._shouldFetch(entry, this.plugin.settings.weatherTtlHours || 2)) {
         done++;
         onProgress?.(done, total, dateStr, true);
         continue;
@@ -1343,6 +1487,8 @@ const LOCALE = {
     s_exif:              'EXIF Metadata',
     s_exifEnable:        'Show image EXIF metadata',
     s_exifEnableDesc:    'Display camera settings and capture info when hovering over images',
+    s_exifGeocode:       'Resolve GPS locations',
+    s_exifGeocodeDesc:   'Send EXIF GPS coordinates to OpenStreetMap Nominatim to show place names',
     exif_loading:        'Reading...',
     exif_noData:         'No EXIF data',
     exif_noDataDesc:     'This image does not contain camera metadata',
@@ -1440,6 +1586,8 @@ const LOCALE = {
     s_exif:              'EXIF 信息',
     s_exifEnable:        '显示图片 EXIF 信息',
     s_exifEnableDesc:    '鼠标悬停在日历图片上时，显示相机参数和拍摄数据',
+    s_exifGeocode:       '解析 GPS 地点',
+    s_exifGeocodeDesc:   '将 EXIF GPS 坐标发送到 OpenStreetMap Nominatim 以显示地名',
     exif_loading:        '读取中...',
     exif_noData:         '无 EXIF 信息',
     exif_noDataDesc:     '这张图片没有包含拍摄元数据',
@@ -2007,6 +2155,7 @@ class ReverseGeocoder {
     this._cache = new Map();      // "lat,lon" → place name string
     this._pending = new Map();    // "lat,lon" → Promise (in-flight dedup)
     this._lastRequest = 0;        // rate limit: 1 req/s
+    this._requestQueue = Promise.resolve();
   }
 
   /**
@@ -2018,7 +2167,10 @@ class ReverseGeocoder {
     if (this._cache.has(key)) return this._cache.get(key);
     if (this._pending.has(key)) return this._pending.get(key);
 
-    const promise = this._doLookup(lat, lon, key);
+    this._requestQueue = this._requestQueue
+      .catch(() => {})
+      .then(() => this._doLookup(lat, lon, key));
+    const promise = this._requestQueue;
     this._pending.set(key, promise);
     try {
       const result = await promise;
@@ -2203,7 +2355,8 @@ function _renderExcerptTemplate(template, dateStr, year, frontmatter, bodyText) 
   result = result.replace(/\{date\}/g, dateStr);
   for (const [key, value] of Object.entries(frontmatter)) {
     if (typeof value === 'string' || typeof value === 'number') {
-      result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(`\\{${escapedKey}\\}`, 'g'), String(value));
     }
   }
   result = result.trim();
@@ -2305,10 +2458,41 @@ class CalendarView extends ItemView {
     );
   }
 
+  onClose() {
+    clearTimeout(this._refreshTimer);
+    clearTimeout(this._exifNoteTimer);
+    this.plugin._endExifHover();
+    for (const observer of this._exifObservers?.values() || []) observer.disconnect();
+    this._exifObservers?.clear();
+    this._removeAllOverlaysFromViews();
+    for (const container of this._hostPositionMarkers) {
+      if (container.style.position === 'relative') container.style.removeProperty('position');
+      this.plugin._hostPositionMarkers?.delete(container);
+    }
+    this._hostPositionMarkers.clear();
+  }
+
   /* ----- File change refresh (debounced) ----- */
   _onFileChanged(file) {
-    // Only care about Calendar/Daily/ .md files
-    if (!(file instanceof TFile) || file.extension !== 'md') return;
+    if (!(file instanceof TFile)) return;
+
+    // Image metadata and HEIC thumbnails must be invalidated when the image
+    // changes, even though the image itself is outside the daily-note folder.
+    const extension = file.extension?.toLowerCase();
+    if (IMAGE_EXTS.includes(extension)) {
+      this.exifCache?.invalidate(file.path);
+      this.plugin.heicCache?.invalidate(file.path);
+      clearTimeout(this._refreshTimer);
+      this._refreshTimer = setTimeout(async () => {
+        this.monthCache.clear();
+        await this.buildMonthCache(this.displayMonth);
+        this.render();
+      }, 300);
+      return;
+    }
+
+    // Only care about daily-note markdown files after image handling.
+    if (extension !== 'md') return;
     const folderPrefix = this.plugin.settings.dailyFolder + '/';
     if (!file.path.startsWith(folderPrefix)) return;
 
@@ -2318,7 +2502,7 @@ class CalendarView extends ItemView {
     clearTimeout(this._refreshTimer);
     this._refreshTimer = setTimeout(async () => {
       // Invalidate cache for the affected month
-      const match = file.name.match(/^(\d{4})-(\d{2})-\d{2}\.md$/);
+      const match = file.name.match(/^(\d{4})-(\d{2})-(\d{2})\.md$/);
       if (match) {
         const year = parseInt(match[1]);
         const month = parseInt(match[2]) - 1;
@@ -2387,7 +2571,8 @@ class CalendarView extends ItemView {
 
     for (const child of folder.children) {
       if (!(child instanceof TFile) || child.extension !== 'md') continue;
-      if (!child.name.startsWith(prefix)) continue;
+      const dateMatch = child.name.match(/^(\d{4})-(\d{2})-(\d{2})\.md$/);
+      if (!dateMatch || dateMatch[1] !== String(year) || dateMatch[2] !== String(month + 1).padStart(2, '0')) continue;
 
       const dateStr = child.name.replace(/\.md$/, '');
       const cache = this.app.metadataCache.getFileCache(child);
@@ -2400,7 +2585,10 @@ class CalendarView extends ItemView {
 
       // Apply thumbnail filter
       if (this.plugin.settings.thumbnailFilter === 'date-prefixed') {
-        images = images.filter((link) => link.startsWith(dateStr));
+        images = images.filter((link) => {
+          const fileName = String(link).split(/[\\/]/).pop() || '';
+          return fileName.startsWith(dateStr);
+        });
       }
 
       if (images.length > 0) {
@@ -2548,26 +2736,27 @@ class CalendarView extends ItemView {
   /** Mouse entered a day cell with an image — start the hover timer. */
   _onExifEnter(cell, imageLink, dateStr) {
     if (!this.plugin.settings.showExif) return;
-    clearTimeout(this.plugin._exifHoverTimer);
-    this.plugin._hideExifTooltip();
+    const hoverToken = this.plugin._beginExifHover();
 
     this.plugin._exifHoverTimer = setTimeout(async () => {
       try {
         const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
         const file = this.app.metadataCache.getFirstLinkpathDest(imageLink, sourcePath);
         if (!(file instanceof TFile)) return;
+        if (!this.plugin._isCurrentExifHover(hoverToken)) return;
         this.plugin._showExifTooltip(cell, null, true);
         const fields = await this.exifCache.get(file);
+        if (!this.plugin._isCurrentExifHover(hoverToken)) return;
         this.plugin._showExifTooltip(cell, fields, false);
 
         // Reverse geocode GPS coordinates asynchronously
-        if (fields && this.plugin.geocoder) {
+        if (this.plugin.settings.exifReverseGeocode && fields && this.plugin.geocoder) {
           const gpsField = fields.find(f => f.key === 'exif_gps');
           if (gpsField) {
             const parts = gpsField.value.split(',').map(s => parseFloat(s.trim()));
             if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
               const place = await this.plugin.geocoder.lookup(parts[0], parts[1]);
-              if (place) {
+              if (place && this.plugin._isCurrentExifHover(hoverToken)) {
                 gpsField.value = place;
                 this.plugin._showExifTooltip(cell, fields, false);
               }
@@ -2581,28 +2770,20 @@ class CalendarView extends ItemView {
   }
 
   _onExifLeave() {
-    clearTimeout(this.plugin._exifHoverTimer);
-    this.plugin._hideExifTooltip();
+    this.plugin._endExifHover();
   }
 
   /* ----- Read cached weather from plugin data (no more YAML pollution) ----- */
   _readCachedWeather(dateStr) {
-    // Check new weatherCache first
-    const entry = this.plugin.weatherCache?.[dateStr];
+    const entry = this.weather.getCachedSnapshot(dateStr);
     if (entry && typeof entry === 'object') {
       // Normalize icon: migrate emoji → .svg filename
-      if (entry.icon && !entry.icon.endsWith('.svg') && entry.weatherCode != null) {
+      if (typeof entry.icon === 'string' && !entry.icon.endsWith('.svg') && entry.weatherCode != null) {
         entry.icon = _lookupWmo(entry.weatherCode).icon;
       }
       return entry;
     }
-    // Fallback: legacy frontmatter
-    const s = this.plugin.settings;
-    const path = `${s.dailyFolder}/${dateStr}.md`;
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) return null;
-    const cache = this.app.metadataCache.getFileCache(file);
-    return cache?.frontmatter?._calendar_weather || null;
+    return null;
   }
 
   /* ----- Render weather card below month header (idempotent) ----- */
@@ -2631,7 +2812,10 @@ class CalendarView extends ItemView {
 
     // Capture existing snapshot BEFORE resetting state
     const sameCardDate = this._weatherCardDate === cardDate;
-    const existingSnap = sameCardDate ? this._weatherSnapshot : null;
+    const existingSnap = sameCardDate && this._weatherSnapshot
+      && this.weather.isSnapshotCompatible(this._weatherSnapshot)
+      ? this._weatherSnapshot
+      : null;
 
     // Different date or stale card — reset state and create fresh card
     this._weatherCardDate = cardDate;
@@ -2734,7 +2918,7 @@ class CalendarView extends ItemView {
     try {
       const snap = await this.weather.getSnapshot(dateStr);
       // Discard stale results if render() was called again since we started fetching
-      if (token !== this._fetchToken) return;
+      if (token !== this._fetchToken || this._weatherCardDate !== dateStr) return;
       this._weatherSnapshot = snap;
       this._weatherError = !snap;
       this._weatherLoading = false;
@@ -2742,7 +2926,7 @@ class CalendarView extends ItemView {
       // Do NOT call full render here — it would recreate the card and trigger another fetch.
       // Weather badges on day cells will appear on the next normal render cycle.
     } catch (err) {
-      if (token !== this._fetchToken) return;
+      if (token !== this._fetchToken || this._weatherCardDate !== dateStr) return;
       this._weatherError = true;
       this._weatherLoading = false;
       this._updateWeatherCardUI();
@@ -2771,8 +2955,10 @@ class CalendarView extends ItemView {
       this._weatherLoading = true;
     }
 
+    const renderToken = this._fetchToken;
     try {
       const snap = await this.weather.forceRefresh(dateStr);
+      if (renderToken !== this._fetchToken || this._weatherCardDate !== dateStr) return;
       this._weatherSnapshot = snap;
       this._weatherError = !snap;
       this._weatherLoading = false;
@@ -2875,9 +3061,10 @@ class CalendarView extends ItemView {
     const s = this.plugin.settings;
     if (!s.weatherEnabled || !s.weatherAutoFetch) return;
     if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) return;
+    const token = this._fetchToken;
     // Fire-and-forget: won't delay navigation
     this.weather.getSnapshot(dateStr).then((snap) => {
-      if (snap) {
+      if (snap && token === this._fetchToken && this._weatherCardDate === dateStr) {
         this._weatherSnapshot = snap;
         this._weatherLoading = false;
         this._weatherError = false;
@@ -2899,7 +3086,10 @@ class CalendarView extends ItemView {
       this._removeAllOverlaysFromViews();
       return;
     }
-    if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) return;
+    if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) {
+      this._removeAllOverlaysFromViews();
+      return;
+    }
 
     const dailyFolder = s.dailyFolder;
     const mdLeaves = this.app.workspace.getLeavesOfType('markdown');
@@ -2938,6 +3128,13 @@ class CalendarView extends ItemView {
         overlay.remove();
       }
     }
+  }
+
+  _invalidateOverlayRequests() {
+    for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+      this._overlayVersions.set(leaf, (this._overlayVersions.get(leaf) || 0) + 1);
+    }
+    this._removeAllOverlaysFromViews();
   }
 
   /* ----- EXIF hover on daily note embedded images ----- */
@@ -3068,16 +3265,17 @@ class CalendarView extends ItemView {
 
   async _onNoteImageEnter(e, img) {
     if (!this.plugin.settings.showExif) return;
-    clearTimeout(this.plugin._exifHoverTimer);
-    this.plugin._hideExifTooltip();
+    const hoverToken = this.plugin._beginExifHover();
 
     this.plugin._exifHoverTimer = setTimeout(async () => {
       try {
         const file = this._resolveImageFile(img);
         if (!(file instanceof TFile)) return;
 
+        if (!this.plugin._isCurrentExifHover(hoverToken)) return;
         this.plugin._showExifTooltip(img, null, true);
         const fields = await this.exifCache.get(file);
+        if (!this.plugin._isCurrentExifHover(hoverToken)) return;
         this.plugin._showExifTooltip(img, fields, false);
       } catch (_) {
         this.plugin._hideExifTooltip();
@@ -3164,6 +3362,9 @@ class CalendarView extends ItemView {
       } finally {
         // Clean up in-flight marker
         this._overlayInFlight.delete(leaf);
+        if (leaf.view?.file === file && !leaf.containerEl?.querySelector(`[${OVERLAY_ATTR}]`)) {
+          this._syncNoteOverlays();
+        }
       }
     })();
     this._overlayInFlight.set(leaf, inFlightPromise);
@@ -3183,11 +3384,13 @@ class CalendarView extends ItemView {
     if (currentFile !== file || !(currentFile instanceof TFile)) return;
 
     // Read snapshot from weatherCache first, then legacy frontmatter
-    const wcEntry = this.plugin.weatherCache?.[dateStr];
     const cache = this.app.metadataCache.getFileCache(currentFile);
-    let snap = (wcEntry && typeof wcEntry === 'object') ? wcEntry : (cache?.frontmatter?._calendar_weather || null);
+    let snap = this.weather.getCachedSnapshot(dateStr)
+      || cache?.frontmatter?._calendar_weather
+      || null;
+    if (snap && !this.weather.isSnapshotCompatible(snap)) snap = null;
     // Normalize icon: migrate emoji → .svg filename
-    if (snap && snap.icon && !snap.icon.endsWith('.svg') && snap.weatherCode != null) {
+    if (snap && typeof snap.icon === 'string' && !snap.icon.endsWith('.svg') && snap.weatherCode != null) {
       snap.icon = _lookupWmo(snap.weatherCode).icon;
     }
     const isStale = snap && typeof snap === 'object' ? this.weather._shouldFetch(snap, this.plugin.settings.weatherTtlHours || 2) : true;
@@ -3197,6 +3400,8 @@ class CalendarView extends ItemView {
       const fetched = await this.weather.getSnapshot(dateStr);
       if (fetched) snap = fetched;
     }
+
+    if (snap && !this.weather.isSnapshotCompatible(snap)) snap = null;
 
     // Final re-check: file may have changed during fetch
     const latestFile = leaf.view?.file;
@@ -3223,7 +3428,8 @@ class CalendarView extends ItemView {
 
     // Icon
     const iconEl = overlay.createEl('img', { cls: 'cal-overlay-icon' });
-    iconEl.setText(snap.icon);
+    iconEl.src = _iconUrl(snap.icon) || '';
+    iconEl.alt = snap.condition || '';
     iconEl.title = snap.condition;
 
     // Info column
@@ -3343,11 +3549,20 @@ class CalendarView extends ItemView {
   /* ----- Sync active date from the currently viewed leaf ----- */
   _syncActiveDate(leaf) {
     leaf = leaf || this.app.workspace.activeLeaf;
-    if (!leaf) return;
+    if (!leaf) {
+      this._clearActiveDate();
+      return;
+    }
     const file = leaf.view?.file;
-    if (!(file instanceof TFile)) return;
+    if (!(file instanceof TFile)) {
+      this._clearActiveDate();
+      return;
+    }
     const folderPrefix = this.plugin.settings.dailyFolder + '/';
-    if (!file.path.startsWith(folderPrefix)) return;
+    if (!file.path.startsWith(folderPrefix)) {
+      this._clearActiveDate();
+      return;
+    }
     const match = file.name.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
     if (match) {
       const newDate = match[1];
@@ -3359,7 +3574,18 @@ class CalendarView extends ItemView {
         this._weatherError = false;
       }
       this.activeDate = newDate;
+    } else {
+      this._clearActiveDate();
     }
+  }
+
+  _clearActiveDate() {
+    if (this.activeDate === null) return;
+    this.activeDate = null;
+    this._weatherCardDate = null;
+    this._weatherSnapshot = null;
+    this._weatherLoading = false;
+    this._weatherError = false;
   }
 
   /* ----- Bulk weather backfill for all past dates ----- */
@@ -3404,6 +3630,22 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  async _refreshViews({ resetSource = false } = {}) {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    await Promise.all(leaves.map(async (leaf) => {
+      const view = leaf.view;
+      if (!view) return;
+      if (resetSource) {
+        view.monthCache?.clear();
+        view._otdProvider?.invalidate();
+        view._otdDotCache = null;
+      }
+      view._invalidateOverlayRequests?.();
+      if (typeof view.refresh === 'function') await view.refresh();
+      view._syncNoteOverlays?.();
+    }));
+  }
+
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -3426,6 +3668,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.dailyFolder = value.replace(/\/+$/, '');
             await this.plugin.saveSettings();
+            await this._refreshViews({ resetSource: true });
           });
       })
       .addExtraButton((btn) => {
@@ -3434,7 +3677,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onClick(() => {
             new FolderSuggestModal(this.app, (path) => {
               this.plugin.settings.dailyFolder = path;
-              this.plugin.saveSettings();
+              this.plugin.saveSettings().then(() => this._refreshViews({ resetSource: true }));
               this.folderInput.setValue(path);
             }).open();
           });
@@ -3470,8 +3713,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherEnabled = value;
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3485,8 +3727,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherLatitude = value.trim();
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3500,8 +3741,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherLongitude = value.trim();
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3515,8 +3755,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherLocationName = value.trim();
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3531,8 +3770,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.weatherUnits = value;
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3559,8 +3797,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
             const n = parseInt(value, 10);
             this.plugin.settings.weatherTtlHours = isNaN(n) || n < 1 ? 2 : n;
             await this.plugin.saveSettings();
-            const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-            if (leaf?.view) leaf.view.refresh();
+            await this._refreshViews();
           })
       );
 
@@ -3700,6 +3937,18 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+
+    new Setting(containerEl)
+      .setName(_s('s_exifGeocode'))
+      .setDesc(_s('s_exifGeocodeDesc'))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.exifReverseGeocode)
+          .onChange(async (value) => {
+            this.plugin.settings.exifReverseGeocode = value;
+            await this.plugin.saveSettings();
+          })
+      );
   }
 }
 
@@ -3742,6 +3991,8 @@ class OnThisDayModal {
     this.month = month;
     this.day = day;
     this.entries = entries || [];
+    this._requestToken = 0;
+    this._closed = false;
     this._onKey = this._onKeyDown.bind(this);
   }
 
@@ -3773,7 +4024,6 @@ class OnThisDayModal {
       cls: 'cal-otd-date-input',
       attr: { 'aria-label': 'Choose date' },
     });
-    dateInput.value = `${new Date().getFullYear()}-${String(this.month).padStart(2,'0')}-${String(this.day).padStart(2,'0')}`;
     dateInput.addEventListener('change', () => {
       const parts = dateInput.value.split('-');
       if (parts.length === 3) {
@@ -3783,6 +4033,7 @@ class OnThisDayModal {
       }
     });
     this.dateInput = dateInput;
+    this._updateDateInput();
 
     const nextDayBtn = nav.createDiv({ cls: 'cal-otd-nav-btn', text: '▶' });
     nextDayBtn.addEventListener('click', (e) => { e.stopPropagation(); this._navigateDate(1); });
@@ -3807,6 +4058,8 @@ class OnThisDayModal {
   }
 
   close() {
+    this._closed = true;
+    this._requestToken++;
     document.removeEventListener('keydown', this._onKey);
     if (this.backdrop && this.backdrop.parentElement) {
       this.backdrop.parentElement.removeChild(this.backdrop);
@@ -3823,15 +4076,14 @@ class OnThisDayModal {
     if (!this.provider) return;
 
     // Compute new date
-    const d = new Date(2026, this.month - 1, this.day + delta);
+    // Use a leap year so Feb 29 remains a valid month/day in the navigator.
+    const d = new Date(2000, this.month - 1, this.day + delta);
     this.month = d.getMonth() + 1;
     this.day = d.getDate();
 
     // Update label
     const lang = this.plugin.settings.weatherLanguage;
-    if (this.dateInput) {
-      this.dateInput.value = `${new Date().getFullYear()}-${String(this.month).padStart(2,'0')}-${String(this.day).padStart(2,'0')}`;
-    }
+    this._updateDateInput();
 
     // Show loading
     this.bodyEl.empty();
@@ -3839,8 +4091,10 @@ class OnThisDayModal {
     loadingEl.setText(_l(lang, 'loading'));
 
     // Fetch
+    const requestToken = ++this._requestToken;
     try {
       this.entries = await this.provider.getEntries(this.month, this.day);
+      if (this._closed || requestToken !== this._requestToken) return;
       this.bodyEl.empty();
       if (this.entries.length === 0) {
         const emptyMsg = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
@@ -3849,10 +4103,17 @@ class OnThisDayModal {
         this._renderGrid();
       }
     } catch (e) {
+      if (this._closed || requestToken !== this._requestToken) return;
       this.bodyEl.empty();
       const errEl = this.bodyEl.createDiv({ cls: 'cal-otd-empty-state' });
       errEl.setText(_l(lang, 'unavailable'));
     }
+  }
+
+  _updateDateInput() {
+    if (!this.dateInput) return;
+    const year = this.month === 2 && this.day === 29 ? 2000 : new Date().getFullYear();
+    this.dateInput.value = `${year}-${String(this.month).padStart(2, '0')}-${String(this.day).padStart(2, '0')}`;
   }
 
   _renderGrid() {

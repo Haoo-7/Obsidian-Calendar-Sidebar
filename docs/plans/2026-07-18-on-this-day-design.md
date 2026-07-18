@@ -15,7 +15,7 @@
 - 位置: 日期格子右下角
 - 样式: 小圆点 (直径 6px)，颜色使用 `var(--color-accent)`
 - 触发: 该日期存在往年（任意年份）的同月同日日记
-- 设置开关: `showOnThisDayDot` (boolean, 默认 true)
+- 设置开关: `showOnThisDayDot` (boolean, 默认 false)
 - 实现: `OnThisDayProvider` 在渲染日历时批量查询当月所有日期的往年数据，标记结果缓存到当月末
 
 ### B: 回顾弹窗
@@ -97,7 +97,7 @@ getEntries(month, day): [{ year, file: TFile, images: string[], excerpt: string 
 
 | Key | 类型 | 默认值 | 说明 |
 |-----|------|--------|------|
-| `showOnThisDayDot` | boolean | true | 日历格子上显示往年标记 |
+| `showOnThisDayDot` | boolean | false | 日历格子上显示往年标记 |
 | `showOnThisDayButton` | boolean | true | 侧边栏显示回顾入口按钮 |
 | `excerptMode` | string | "auto" | 摘要提取方式 |
 | `excerptFrontmatterKey` | string | "excerpt" | frontmatter 模式下读取的字段名 |

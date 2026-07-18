@@ -4,6 +4,14 @@
 
 在 Obsidian 左侧侧边栏顶部，添加一个 DayOne 风格的月历面板。有图的日期格子展示缩略图背景，点击日期打开对应日记。
 
+## 当前实现说明
+
+- 发布入口仍为 `main.js`，可通过 `build.mjs` 从 TypeScript 核心模块构建兼容产物。
+- 天气快照存储在插件 `data.json`，旧版 `_calendar_weather` frontmatter 仅用于兼容迁移。
+- 天气缓存包含坐标、单位和时区配置指纹，配置变化不会复用旧地点数据。
+- EXIF tooltip 使用安全 DOM 文本节点；GPS 反向地理编码默认关闭。
+- 日期、摘要、天气缓存和 tooltip 的纯逻辑位于 `src/`，由 `tests/` 覆盖。
+
 ---
 
 ## 最终效果
