@@ -209,11 +209,55 @@ class CalendarSidebarPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = await this.loadData() || {};
+    // Extract weather cache separately so it doesn't get overwritten by saveSettings
+    this.weatherCache = data.weatherCache || {};
+    // Delete stale cache entries to prevent data.json bloat
+    this._cleanupWeatherCache();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    delete this.settings.weatherCache; // settings object shouldn't carry the cache
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    // Preserve weather cache when saving settings
+    const data = await this.loadData() || {};
+    const merged = Object.assign({}, data, this.settings);
+    merged.weatherCache = this.weatherCache || {};
+    await this.saveData(merged);
+  }
+
+  /** Save weather cache without touching settings. Debounced to avoid excessive writes. */
+  _saveWeatherCache() {
+    if (this._weatherSaveTimer) clearTimeout(this._weatherSaveTimer);
+    this._weatherSaveTimer = setTimeout(async () => {
+      const data = await this.loadData() || {};
+      data.weatherCache = this.weatherCache || {};
+      await this.saveData(data);
+      this._cleanupWeatherCache();
+    }, 2000); // debounce 2s
+  }
+
+  /** Remove cache entries older than 90 days. */
+  _cleanupWeatherCache() {
+    if (!this.weatherCache) return;
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    let removed = 0;
+    for (const [key, entry] of Object.entries(this.weatherCache)) {
+      if (entry && entry.fetchedAt) {
+        if (new Date(entry.fetchedAt).getTime() < cutoff) {
+          delete this.weatherCache[key];
+          removed++;
+        }
+      }
+    }
+    if (removed > 0) {
+      // Schedule cleanup persist (no urgency)
+      setTimeout(async () => {
+        const data = await this.loadData() || {};
+        data.weatherCache = this.weatherCache;
+        await this.saveData(data);
+      }, 5000);
+    }
   }
 
   _loadStyles() {
@@ -922,7 +966,7 @@ class WeatherService {
     return ageMs > ttlHours * 60 * 60 * 1000;
   }
 
-  /** Fetch from Open-Meteo or return cached snapshot from frontmatter. */
+  /** Fetch from Open-Meteo or return cached snapshot from plugin data. */
   async _fetchOrUseCached(dateStr) {
     const s = this.plugin.settings;
     const lat = parseFloat(s.weatherLatitude);
@@ -931,24 +975,31 @@ class WeatherService {
     const ttlHours = s.weatherTtlHours || 2;
     const locationName = s.weatherLocationName || '';
 
-    // Try reading existing snapshot from frontmatter first
+    // 1. Check weatherCache in plugin data.json (new storage)
+    const cacheEntry = this.plugin.weatherCache?.[dateStr];
+    if (cacheEntry && cacheEntry.fetchedAt && !this._shouldFetch(cacheEntry, ttlHours)) {
+      return cacheEntry;
+    }
+
+    // 2. Fallback: check legacy frontmatter _calendar_weather (for existing users)
     const path = `${s.dailyFolder}/${dateStr}.md`;
     const existingFile = this.plugin.app.vault.getAbstractFileByPath(path);
-
     if (existingFile instanceof TFile) {
       const cache = this.plugin.app.metadataCache.getFileCache(existingFile);
-      if (cache?.frontmatter) {
-        const snap = cache.frontmatter._calendar_weather;
-        if (snap && typeof snap === 'object' && !this._shouldFetch(snap, ttlHours)) {
-          return snap;
-        }
+      const snap = cache?.frontmatter?._calendar_weather;
+      if (snap && typeof snap === 'object' && !this._shouldFetch(snap, ttlHours)) {
+        // Migrate to new storage silently
+        this.plugin.weatherCache = this.plugin.weatherCache || {};
+        this.plugin.weatherCache[dateStr] = { ...snap };
+        this.plugin._saveWeatherCache();
+        return snap;
       }
-    } else {
-      // File doesn't exist — check memory cache to avoid repeated fetches
-      const cachedRecord = this._memoryCache.get(dateStr);
-      if (cachedRecord && !this._shouldFetch(cachedRecord, ttlHours)) {
-        return cachedRecord.snapshot;
-      }
+    }
+
+    // 3. Memory cache (for dates without diary files)
+    const cachedRecord = this._memoryCache.get(dateStr);
+    if (cachedRecord && !this._shouldFetch(cachedRecord, ttlHours)) {
+      return cachedRecord.snapshot;
     }
 
     // Fetch from Open-Meteo
@@ -1146,23 +1197,11 @@ class WeatherService {
     }
   }
 
-  /** Persist weather snapshot to daily note frontmatter. */
+  /** Persist weather snapshot to plugin data (no more YAML pollution). */
   async _persistSnapshot(dateStr, weather) {
-    const path = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-    const file = this.plugin.app.vault.getAbstractFileByPath(path);
-
-    if (!(file instanceof TFile)) {
-      // File doesn't exist yet — store in memory, will persist when created
-      return;
-    }
-
-    try {
-      await this.plugin.app.fileManager.processFrontMatter(file, (fm) => {
-        fm._calendar_weather = { ...weather };
-      });
-    } catch (err) {
-      console.warn('[CalendarSidebar] Failed to persist weather snapshot:', err.message);
-    }
+    if (!this.plugin.weatherCache) this.plugin.weatherCache = {};
+    this.plugin.weatherCache[dateStr] = { ...weather };
+    this.plugin._saveWeatherCache();
   }
 
   /** Force refresh weather for a specific date (bypasses TTL check). */
@@ -1200,16 +1239,14 @@ class WeatherService {
   hasCachedSnapshot(dateStr) {
     const s = this.plugin.settings;
     if (!s.weatherEnabled) return false;
-
+    // Check new weatherCache first
+    if (this.plugin.weatherCache?.[dateStr]) return true;
+    // Fallback: check legacy frontmatter
     const path = `${s.dailyFolder}/${dateStr}.md`;
     const existingFile = this.plugin.app.vault.getAbstractFileByPath(path);
     if (!(existingFile instanceof TFile)) return false;
-
     const cache = this.plugin.app.metadataCache.getFileCache(existingFile);
-    if (cache?.frontmatter?._calendar_weather) {
-      return true;
-    }
-    return false;
+    return !!cache?.frontmatter?._calendar_weather;
   }
 }
 
@@ -2491,8 +2528,12 @@ class CalendarView extends ItemView {
     this.plugin._hideExifTooltip();
   }
 
-  /* ----- Read cached weather from metadata cache (non-blocking) ----- */
+  /* ----- Read cached weather from plugin data (no more YAML pollution) ----- */
   _readCachedWeather(dateStr) {
+    // Check new weatherCache first
+    const entry = this.plugin.weatherCache?.[dateStr];
+    if (entry && typeof entry === 'object') return entry;
+    // Fallback: legacy frontmatter
     const s = this.plugin.settings;
     const path = `${s.dailyFolder}/${dateStr}.md`;
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -3070,9 +3111,10 @@ class CalendarView extends ItemView {
     const currentFile = leaf.view?.file;
     if (currentFile !== file || !(currentFile instanceof TFile)) return;
 
-    // Read snapshot from metadata cache first
+    // Read snapshot from weatherCache first, then legacy frontmatter
+    const wcEntry = this.plugin.weatherCache?.[dateStr];
     const cache = this.app.metadataCache.getFileCache(currentFile);
-    let snap = cache?.frontmatter?._calendar_weather || null;
+    let snap = (wcEntry && typeof wcEntry === 'object') ? wcEntry : (cache?.frontmatter?._calendar_weather || null);
     const isStale = snap && typeof snap === 'object' ? this.weather._shouldFetch(snap, this.plugin.settings.weatherTtlHours || 2) : true;
 
     // If no valid snapshot, trigger a background fetch
