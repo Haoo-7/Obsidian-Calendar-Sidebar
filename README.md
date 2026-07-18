@@ -23,12 +23,12 @@ DayOne-style monthly calendar panel in the Obsidian left sidebar. / DayOne é£Žæ 
 - EXIF metadata tooltips for calendar and daily-note images
 - HEIC/HEIF thumbnail conversion on desktop
 - On This Day review with excerpts and photo wall
-- Journal timeline with multiple source directories and filters
+- Journal timeline with compact search and filters for dates, moods, and favorites
 - Five-level mood picker with optional labels and local trend statistics
 
 Weather snapshots are stored in the plugin's `data.json`, not written into daily-note frontmatter. Historical `_calendar_weather` frontmatter is read for backward compatibility and migrated when compatible. EXIF GPS reverse geocoding is disabled by default and can be enabled explicitly in settings.
 
-Journal bodies remain Markdown. Configure `daily`, `journal`, or `external` source directories in Journal sources. Dates are resolved from the configured date field, `date`, `creationDate`, and then valid date-prefixed filenames; modification time is never used as a fallback. Use [Day One Importer](https://github.com/MarcDonald/obsidian-day-one-importer) or [Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) for external imports, then add the output directory. This plugin does not parse JSON/ZIP exports or rewrite imported files.
+Journal bodies remain Markdown. The timeline indexes the configured daily-notes folder by default (`Calendar/Daily`). Optional external-import folders can be added as ordinary journal sources; they do not create a separate entry type or source filter in the timeline. Dates are resolved from the configured date field, `date`, `creationDate`, and then valid date-prefixed filenames; modification time is never used as a fallback. Use [Day One Importer](https://github.com/MarcDonald/obsidian-day-one-importer) or [Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) for external imports, then add the output directory. This plugin does not parse JSON/ZIP exports or rewrite imported files.
 
 Mood metadata is authoritative in `Calendar/journal-metadata.json` by default. Markdown frontmatter is unchanged unless mirroring is enabled, and deleted-note records remain recoverable as orphans.
 

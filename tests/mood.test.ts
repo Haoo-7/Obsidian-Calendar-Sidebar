@@ -4,6 +4,7 @@ import { MOOD_LABELS, MOOD_LEVELS, moveMoodScore } from '../src/mood';
 describe('mood picker choices', () => {
   it('provides five ordered levels and optional labels', () => {
     expect(MOOD_LEVELS.map((level) => level.score)).toEqual([-2, -1, 0, 1, 2]);
+    expect(MOOD_LEVELS.every((level) => !('icon' in level))).toBe(true);
     expect(MOOD_LABELS.map((label) => label.id)).toContain('calm');
     expect(MOOD_LABELS.map((label) => label.id)).toContain('grateful');
   });

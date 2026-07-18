@@ -23,7 +23,7 @@ DayOne 风格的月历面板，显示在 Obsidian 左侧侧边栏文件管理器
 - **EXIF 信息** — 在日历格子和日记图片上查看拍摄信息
 - **HEIC/HEIF 支持** — 桌面端自动生成缩略图
 - **去年今日** — 查看往年同日的图片和摘要
-- **日记时间线** — 跨多个来源目录搜索、按日期/来源/心情/收藏筛选，并在相邻 Markdown leaf 打开
+- **日记时间线** — 默认显示每日笔记，提供紧凑搜索、日期/心情/收藏筛选，并在相邻 Markdown leaf 打开
 - **可视化心情** — 五级感受刻度加可选情绪标签，默认保存到 vault 内 `Calendar/journal-metadata.json`
 - **回顾统计** — 心情趋势、分布、常用标签、连续记录和月度完成率
 
@@ -46,7 +46,7 @@ EXIF GPS 反向地理编码默认关闭。只有显式开启「解析 GPS 地点
 
 ## 日记索引与外部导入
 
-日记正文仍然是 Markdown。设置中的 Journal sources 可配置多个来源目录，来源类型可以是 `daily`、`journal` 或 `external`，并可指定 `dateField`。索引按配置日期字段、`date`、`creationDate`、合法日期文件名的顺序识别日期；无法识别日期的文件只进入诊断列表，不使用修改时间猜测。
+日记正文仍然是 Markdown。时间线默认只索引每日笔记文件夹（默认 `Calendar/Daily`）。如需兼容 Day One 或 Apple Journal 的导入结果，可在 Journal sources 中添加外部目录；这些文件会作为普通日记显示，不产生独立的条目类型或来源筛选器，并可指定 `dateField`。索引按配置日期字段、`date`、`creationDate`、合法日期文件名的顺序识别日期；无法识别日期的文件只进入诊断列表，不使用修改时间猜测。
 
 Day One 或 Apple Journal 导入请先使用专业导入插件，再把输出目录加入 Journal sources：
 
@@ -90,7 +90,7 @@ Day One 或 Apple Journal 导入请先使用专业导入插件，再把输出目
 | **Temperature units** | 温度单位：摄氏度/华氏度 |
 | **Auto-fetch weather** | 打开日记时自动获取天气 |
 | **Cache TTL (hours)** | 缓存有效期（小时） |
-| **Journal sources** | 多来源目录 JSON 配置 |
+| **Journal sources** | 每日笔记目录之外的可选外部导入目录 JSON 配置 |
 | **Mood metadata path** | vault 内心情 JSON 路径，默认 `Calendar/journal-metadata.json` |
 | **Mirror mood to frontmatter** | 默认关闭的 frontmatter 镜像 |
 | **Daily reminder** | 可关闭的本地记录提醒 |

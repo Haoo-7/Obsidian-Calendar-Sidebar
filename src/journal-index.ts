@@ -15,7 +15,6 @@ import type {
 
 export const DEFAULT_JOURNAL_SOURCES: JournalSource[] = [
   { id: 'daily', path: 'Calendar/Daily', type: 'daily', label: 'Daily notes' },
-  { id: 'entries', path: 'Calendar/Entries', type: 'journal', label: 'Journal entries' },
 ];
 
 export interface JournalIndexSettings {
@@ -186,7 +185,7 @@ export class JournalIndex {
       if (filter.sourceId && entry.sourceId !== filter.sourceId) return false;
       if (filter.moodScore !== undefined && entry.mood?.score !== filter.moodScore) return false;
       if (filter.favoriteOnly && !entry.favorite) return false;
-      if (query && !`${entry.title} ${entry.excerpt} ${entry.path}`.toLowerCase().includes(query)) return false;
+      if (query && !`${entry.title} ${entry.excerpt} ${entry.path} ${entry.searchText || ''}`.toLowerCase().includes(query)) return false;
       return true;
     });
   }
@@ -261,6 +260,7 @@ export class JournalIndex {
           ...source,
           id: source.id || `source-${index + 1}`,
           path: normalizeVaultPath(source.path),
+          type: String(source.type) === 'journal' ? 'external' : source.type,
         }))
         .filter((source) => source.path.length > 0 && source.enabled !== false);
     }
@@ -325,6 +325,7 @@ export class JournalIndex {
       date: resolved.date,
       title: titleFromContent(file.name, content, frontmatter),
       excerpt: extractExcerpt(content) ?? '',
+      searchText: content,
       sourceId: source.id,
       sourcePath: source.path,
       sourceType: source.type,

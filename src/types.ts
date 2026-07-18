@@ -24,7 +24,7 @@ export interface ExifField {
   value: string;
 }
 
-export type JournalSourceType = 'daily' | 'journal' | 'external';
+export type JournalSourceType = 'daily' | 'external';
 
 export interface JournalSource {
   id: string;
@@ -62,6 +62,7 @@ export interface JournalEntry {
   modifiedAt?: string;
   location?: { name?: string; latitude?: number; longitude?: number };
   attachments: string[];
+  searchText?: string;
   weather?: WeatherSnapshot;
   mood?: MoodRecord;
   activity?: unknown;

@@ -112,22 +112,50 @@ var init_date_utils = __esm({
 });
 
 // src/excerpt.ts
-function extractExcerpt(content, maxLength = 100) {
-  let text = content.replace(/^---[\s\S]*?---\n*/, "");
-  text = text.replace(/!\[\[.*?\]\]/g, "");
-  text = text.replace(/\[\[([^\]|]+)(\|[^\]]+)?\]\]/g, "$1");
-  text = text.replace(/^#{1,6}\s+/gm, "");
-  text = text.replace(/[*_~`]+/g, "");
-  text = text.replace(/={2,}/g, "");
-  text = text.replace(/^>\s?/gm, "");
-  text = text.replace(/^\s*[-*+]\s/gm, "");
-  text = text.replace(/\n+/g, " ").replace(/\s{2,}/g, " ").trim();
-  if (!text) return null;
-  return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+var excerpt_exports = {};
+__export(excerpt_exports, {
+  extractExcerpt: () => extractExcerpt,
+  isGenericJournalTitle: () => isGenericJournalTitle,
+  renderExcerptTemplate: () => renderExcerptTemplate
+});
+function stripFrontmatter(content) {
+  return content.replace(FRONTMATTER, "");
 }
+function freewriteSection(content) {
+  const match = /(?:^|\n)#{1,6}\s*[^\n]*\bfreewrite\b[^\n]*(?:\n|$)([\s\S]*?)(?=\n#{1,6}\s+|$)/i.exec(content);
+  return match ? match[1] : content;
+}
+function cleanMarkdown(content) {
+  let text = stripFrontmatter(content).replace(FENCED_BLOCK, " ");
+  text = freewriteSection(text);
+  text = text.replace(/<div[^>]*class=["'][^"']*(?:dataview|metadata|callout)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, " ").replace(/^\s*(?:dataviewjs?|dv\.|INPUT\[|VIEW\[|BUTTON\[).*$/gim, " ").replace(/^\s*[-*+]\s+\[[ xX]\].*$/gm, " ").replace(/^\s*(?:[-*_]\s*){3,}$/gm, " ").replace(/^\s*#{0,6}\s*[<❮].*\d{4}-\d{2}-\d{2}.*[>❯].*$/gm, " ").replace(/^\s*#{1,6}\s*.*\b\d{4}\s*\/\s*Q[1-4]\b.*$/gim, " ").replace(/^\s*#{1,6}\s*(?:dataview|meta\s*bind|tasks?|habits?|tips?|relevant\s+project)\b.*$/gim, " ").replace(/^\s*(?:#[-\w\\]+\s*){2,}$/gm, " ").replace(/^\s*#{1,6}\s*(?:daily note|journal entry|freewrite)\s*$/gim, " ").replace(/!\[\[[^\]]*\]\]/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, label) => label || target).replace(/`[^`]*`/g, " ").replace(/^\s*#{1,6}\s+/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*>\s?/gm, "").replace(/<[^>]+>/g, " ").replace(/[*_~]+/g, "").replace(/^\s*https?:\/\/\S+\s*$/gm, " ");
+  return text.split(/\n\s*\n/).map((paragraph) => paragraph.replace(/\s+/g, " ").trim()).filter((paragraph) => paragraph && !/^\d{4}-\d{2}-\d{2}$/.test(paragraph)).join(" ").trim();
+}
+function extractExcerpt(content, maxLength = 160) {
+  const text = cleanMarkdown(content);
+  if (!text) return null;
+  return text.length > maxLength ? `${text.substring(0, maxLength).trimEnd()}...` : text;
+}
+function isGenericJournalTitle(title, date) {
+  const normalized = title.trim().replace(/\s+/g, " ").toLowerCase();
+  return GENERIC_TITLES.has(normalized) || Boolean(date && normalized === date.toLowerCase());
+}
+function renderExcerptTemplate(template, date, year, frontmatter, body) {
+  let result = template.replace(/\{body\}/g, body || "").replace(/\{year\}/g, String(year)).replace(/\{date\}/g, date);
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`\\{${escapedKey}\\}`, "g"), String(value));
+  }
+  return result.trim() || null;
+}
+var FRONTMATTER, FENCED_BLOCK, GENERIC_TITLES;
 var init_excerpt = __esm({
   "src/excerpt.ts"() {
     "use strict";
+    FRONTMATTER = /^\s*---[\s\S]*?---\s*/;
+    FENCED_BLOCK = /^\s*(```|~~~)[\s\S]*?^\s*\1\s*$/gm;
+    GENERIC_TITLES = /* @__PURE__ */ new Set(["daily note", "daily", "journal entry", "entry", "untitled", "freewrite"]);
   }
 });
 
@@ -237,8 +265,7 @@ var init_journal_index = __esm({
     init_date_utils();
     init_excerpt();
     DEFAULT_JOURNAL_SOURCES = [
-      { id: "daily", path: "Calendar/Daily", type: "daily", label: "Daily notes" },
-      { id: "entries", path: "Calendar/Entries", type: "journal", label: "Journal entries" }
+      { id: "daily", path: "Calendar/Daily", type: "daily", label: "Daily notes" }
     ];
     JournalIndex = class {
       constructor(app, getMood = () => void 0) {
@@ -274,7 +301,7 @@ var init_journal_index = __esm({
           if (filter.sourceId && entry.sourceId !== filter.sourceId) return false;
           if (filter.moodScore !== void 0 && entry.mood?.score !== filter.moodScore) return false;
           if (filter.favoriteOnly && !entry.favorite) return false;
-          if (query && !`${entry.title} ${entry.excerpt} ${entry.path}`.toLowerCase().includes(query)) return false;
+          if (query && !`${entry.title} ${entry.excerpt} ${entry.path} ${entry.searchText || ""}`.toLowerCase().includes(query)) return false;
           return true;
         });
       }
@@ -333,7 +360,8 @@ var init_journal_index = __esm({
           return configured.map((source, index) => ({
             ...source,
             id: source.id || `source-${index + 1}`,
-            path: normalizeVaultPath(source.path)
+            path: normalizeVaultPath(source.path),
+            type: String(source.type) === "journal" ? "external" : source.type
           })).filter((source) => source.path.length > 0 && source.enabled !== false);
         }
         const dailyFolder = normalizeVaultPath(settings.dailyFolder || "Calendar/Daily");
@@ -390,6 +418,7 @@ var init_journal_index = __esm({
           date: resolved.date,
           title: titleFromContent(file.name, content, frontmatter),
           excerpt: extractExcerpt(content) ?? "",
+          searchText: content,
           sourceId: source.id,
           sourcePath: source.path,
           sourceType: source.type,
@@ -700,6 +729,7 @@ var mood_exports = {};
 __export(mood_exports, {
   MOOD_LABELS: () => MOOD_LABELS,
   MOOD_LEVELS: () => MOOD_LEVELS,
+  getMoodColor: () => getMoodColor,
   moveMoodScore: () => moveMoodScore
 });
 function moveMoodScore(score, direction) {
@@ -707,16 +737,19 @@ function moveMoodScore(score, direction) {
   const index = MOOD_LEVELS.findIndex((level) => level.score === current);
   return MOOD_LEVELS[Math.max(0, Math.min(MOOD_LEVELS.length - 1, index + direction))].score;
 }
+function getMoodColor(score) {
+  return MOOD_LEVELS.find((level) => level.score === score)?.color ?? "var(--background-modifier-border)";
+}
 var MOOD_LEVELS, MOOD_LABELS;
 var init_mood = __esm({
   "src/mood.ts"() {
     "use strict";
     MOOD_LEVELS = [
-      { score: -2, icon: "frown", label: "Very low", color: "#c2415d" },
-      { score: -1, icon: "cloud-drizzle", label: "Low", color: "#d97745" },
-      { score: 0, icon: "meh", label: "Neutral", color: "#a18442" },
-      { score: 1, icon: "smile", label: "Good", color: "#4d9b70" },
-      { score: 2, icon: "laugh", label: "Very good", color: "#3689a4" }
+      { score: -2, labelKey: "veryLow", color: "#d84b76" },
+      { score: -1, labelKey: "low", color: "#e68a3b" },
+      { score: 0, labelKey: "neutral", color: "#d9bd4c" },
+      { score: 1, labelKey: "good", color: "#56a86a" },
+      { score: 2, labelKey: "veryGood", color: "#4b93d1" }
     ];
     MOOD_LABELS = [
       { id: "calm", label: "Calm" },
@@ -731,21 +764,224 @@ var init_mood = __esm({
   }
 });
 
+// src/i18n.ts
+var i18n_exports = {};
+__export(i18n_exports, {
+  feelingLabel: () => feelingLabel,
+  formatJournalDate: () => formatJournalDate,
+  getDisplayLanguage: () => getDisplayLanguage,
+  moodLabel: () => moodLabel,
+  moodLabelKey: () => moodLabelKey,
+  t: () => t
+});
+function getDisplayLanguage(settings = {}) {
+  return (settings.displayLanguage || settings.weatherLanguage) === "en" ? "en" : "zh";
+}
+function t(settings, key, values = {}) {
+  let value = STRINGS[getDisplayLanguage(settings)][key] ?? STRINGS.en[key] ?? key;
+  for (const [name, replacement] of Object.entries(values)) value = value.replace(`{${name}}`, String(replacement));
+  return value;
+}
+function moodLabelKey(score) {
+  return score === -2 ? "veryLow" : score === -1 ? "low" : score === 0 ? "neutral" : score === 1 ? "good" : "veryGood";
+}
+function moodLabel(settings, score) {
+  return t(settings, moodLabelKey(score));
+}
+function feelingLabel(settings, id) {
+  return t(settings, id);
+}
+function formatJournalDate(date, settings) {
+  const value = /* @__PURE__ */ new Date(`${date}T12:00:00`);
+  if (getDisplayLanguage(settings) === "en") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", weekday: "short" }).format(value);
+  }
+  const parts = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", weekday: "short" }).formatToParts(value);
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
+  const day = parts.find((part) => part.type === "day")?.value ?? "";
+  const weekday = (parts.find((part) => part.type === "weekday")?.value ?? "").replace("\u5468", "");
+  return `${month}\u6708${day}\u65E5 \u5468${weekday}`;
+}
+var STRINGS;
+var init_i18n = __esm({
+  "src/i18n.ts"() {
+    "use strict";
+    STRINGS = {
+      zh: {
+        timelineTitle: "\u65E5\u8BB0\u65F6\u95F4\u7EBF",
+        searchJournal: "\u641C\u7D22\u65E5\u8BB0",
+        openFilters: "\u6253\u5F00\u7B5B\u9009",
+        closeFilters: "\u5173\u95ED\u7B5B\u9009",
+        clearFilters: "\u6E05\u9664\u7B5B\u9009",
+        fromDate: "\u5F00\u59CB\u65E5\u671F",
+        toDate: "\u7ED3\u675F\u65E5\u671F",
+        allMoods: "\u5168\u90E8\u5FC3\u60C5",
+        favoritesOnly: "\u4EC5\u6536\u85CF",
+        favorite: "\u6536\u85CF",
+        media: "\u5F20\u56FE\u7247",
+        noResults: "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u65E5\u8BB0",
+        currentStreak: "\u5F53\u524D\u8FDE\u7EED",
+        longestStreak: "\u6700\u957F\u8FDE\u7EED",
+        thisMonth: "\u672C\u6708\u5B8C\u6210",
+        moodTrend: "\u8FD1\u4E03\u5929\u5FC3\u60C5",
+        noMood: "\u6682\u65E0\u5FC3\u60C5\u8BB0\u5F55",
+        recordMood: "\u8BB0\u5F55\u5F53\u524D\u65E5\u8BB0\u5FC3\u60C5",
+        createDailyNote: "\u6253\u5F00\u6216\u521B\u5EFA\u4ECA\u65E5\u7B14\u8BB0",
+        moodTitle: "\u8BB0\u5F55\u5FC3\u60C5",
+        moodQuestion: "\u4ECA\u5929\u7684\u611F\u53D7\u5982\u4F55\uFF1F",
+        chooseLevel: "\u9009\u62E9\u4E00\u4E2A\u5F3A\u5EA6",
+        addFeelings: "\u6DFB\u52A0\u60C5\u7EEA\u6807\u7B7E",
+        chooseFeelings: "\u9009\u62E9\u6240\u6709\u7B26\u5408\u7684\u6807\u7B7E",
+        back: "\u8FD4\u56DE",
+        save: "\u4FDD\u5B58",
+        selected: "\u5DF2\u9009\u62E9",
+        veryLow: "\u5F88\u4F4E",
+        low: "\u8F83\u4F4E",
+        neutral: "\u5E73\u7A33",
+        good: "\u8F83\u597D",
+        veryGood: "\u5F88\u597D",
+        calm: "\u5E73\u9759",
+        grateful: "\u611F\u6FC0",
+        anxious: "\u7126\u8651",
+        tired: "\u75B2\u60EB",
+        energized: "\u7CBE\u529B\u5145\u6C9B",
+        hopeful: "\u5145\u6EE1\u5E0C\u671B",
+        sad: "\u96BE\u8FC7",
+        focused: "\u4E13\u6CE8",
+        moodSaved: "\u5FC3\u60C5\u5DF2\u4FDD\u5B58",
+        metadataExported: "\u5FC3\u60C5\u5143\u6570\u636E\u5DF2\u5BFC\u51FA\u5230 {path}",
+        metadataRestored: "\u5FC3\u60C5\u5143\u6570\u636E\u5907\u4EFD\u5DF2\u6062\u590D",
+        metadataValid: "\u5FC3\u60C5\u5143\u6570\u636E\u5B8C\u6574",
+        importedMoods: "\u5DF2\u5BFC\u5165 {count} \u6761\u5FC3\u60C5\u8BB0\u5F55",
+        dailyReminder: "\u4ECA\u5929\u8FD8\u6CA1\u6709\u65E5\u8BB0\u8BB0\u5F55",
+        language: "\u663E\u793A\u8BED\u8A00",
+        languageDesc: "\u7EDF\u4E00\u63A7\u5236\u63D2\u4EF6\u754C\u9762\u3001\u63D0\u793A\u3001\u6807\u7B7E\u548C\u8F85\u52A9\u6587\u672C",
+        chinese: "\u4E2D\u6587",
+        english: "English",
+        journalSources: "\u65E5\u8BB0\u6765\u6E90\u76EE\u5F55",
+        journalSourcesDesc: "\u914D\u7F6E\u6BCF\u65E5\u7B14\u8BB0\u76EE\u5F55\u548C\u53EF\u9009\u5916\u90E8\u5BFC\u5165\u76EE\u5F55\u3002\u65E7\u7248\u72EC\u7ACB\u6761\u76EE\u6765\u6E90\u4E0D\u518D\u9ED8\u8BA4\u542F\u7528\u3002",
+        moodMetadataPath: "\u5FC3\u60C5\u5143\u6570\u636E\u8DEF\u5F84",
+        moodMetadataPathDesc: "vault \u5185 JSON \u8DEF\u5F84\uFF0CJSON \u662F\u5FC3\u60C5\u4E3B\u6570\u636E\u6E90\u3002",
+        mirrorMood: "\u955C\u50CF\u5FC3\u60C5\u5230 frontmatter",
+        mirrorMoodDesc: "\u5F00\u542F\u540E\u4FDD\u5B58\u5FC3\u60C5\u65F6\u624D\u5199\u5165 Markdown \u7684 mood \u548C mood_labels\u3002",
+        reminder: "\u6BCF\u65E5\u63D0\u9192",
+        reminderDesc: "\u4ECA\u5929\u6CA1\u6709\u65E5\u8BB0\u8BB0\u5F55\u65F6\u663E\u793A\u672C\u5730\u63D0\u9192\u3002",
+        journalTools: "\u65E5\u8BB0\u5DE5\u5177",
+        journalToolsDesc: "\u6253\u5F00\u65F6\u95F4\u7EBF\u6216\u68C0\u6D4B\u5916\u90E8\u5BFC\u5165\u76EE\u5F55\u3002",
+        openTimeline: "\u6253\u5F00\u65F6\u95F4\u7EBF",
+        detectImports: "\u68C0\u6D4B\u5BFC\u5165",
+        weatherTimezone: "\u5929\u6C14\u65F6\u533A",
+        weatherTimezoneDesc: "\u65E5\u8BB0\u65E5\u671F\u6BD4\u8F83\u548C Open-Meteo \u4F7F\u7528\u7684 IANA \u65F6\u533A\u3002auto \u4F7F\u7528\u7CFB\u7EDF\u65F6\u533A\u3002",
+        openCalendar: "\u6253\u5F00\u65E5\u5386\u4FA7\u680F",
+        refreshWeather: "\u5237\u65B0\u5F53\u524D\u65E5\u671F\u5929\u6C14",
+        openOnThisDay: "\u6253\u5F00\u53BB\u5E74\u4ECA\u65E5",
+        openTimelineCommand: "\u6253\u5F00\u65E5\u8BB0\u65F6\u95F4\u7EBF",
+        newDailyCommand: "\u6253\u5F00\u6216\u521B\u5EFA\u4ECA\u65E5\u7B14\u8BB0",
+        recordMoodCommand: "\u8BB0\u5F55\u5F53\u524D\u65E5\u8BB0\u5FC3\u60C5",
+        exportMetadataCommand: "\u5BFC\u51FA\u5FC3\u60C5\u5143\u6570\u636E JSON",
+        restoreMetadataCommand: "\u6062\u590D\u5FC3\u60C5\u5143\u6570\u636E\u5907\u4EFD",
+        integrityCommand: "\u68C0\u67E5\u5FC3\u60C5\u5143\u6570\u636E\u5B8C\u6574\u6027",
+        importFrontmatterCommand: "\u5BFC\u5165 frontmatter \u5FC3\u60C5\u5143\u6570\u636E",
+        detectImportsCommand: "\u68C0\u6D4B\u65E5\u8BB0\u5BFC\u5165\u76EE\u5F55"
+      },
+      en: {
+        timelineTitle: "Journal timeline",
+        searchJournal: "Search journal",
+        openFilters: "Open filters",
+        closeFilters: "Close filters",
+        clearFilters: "Clear filters",
+        fromDate: "From date",
+        toDate: "To date",
+        allMoods: "All moods",
+        favoritesOnly: "Favorites only",
+        favorite: "Favorite",
+        media: " media",
+        noResults: "No journal entries match the filters",
+        currentStreak: "Current streak",
+        longestStreak: "Longest streak",
+        thisMonth: "This month",
+        moodTrend: "Mood, last 7 days",
+        noMood: "No mood records",
+        recordMood: "Record current journal mood",
+        createDailyNote: "Open or create today's note",
+        moodTitle: "Record mood",
+        moodQuestion: "How did today feel?",
+        chooseLevel: "Choose a level",
+        addFeelings: "Add feelings",
+        chooseFeelings: "Choose any that fit",
+        back: "Back",
+        save: "Save",
+        selected: "Selected",
+        veryLow: "Very low",
+        low: "Low",
+        neutral: "Steady",
+        good: "Good",
+        veryGood: "Very good",
+        calm: "Calm",
+        grateful: "Grateful",
+        anxious: "Anxious",
+        tired: "Tired",
+        energized: "Energized",
+        hopeful: "Hopeful",
+        sad: "Sad",
+        focused: "Focused",
+        moodSaved: "Mood saved",
+        metadataExported: "Mood metadata exported to {path}",
+        metadataRestored: "Mood metadata backup restored",
+        metadataValid: "Mood metadata is valid",
+        importedMoods: "Imported {count} mood records",
+        dailyReminder: "No note for today",
+        language: "Display language",
+        languageDesc: "Controls plugin views, notices, labels, and accessible text",
+        chinese: "\u4E2D\u6587",
+        english: "English",
+        journalSources: "Journal source directories",
+        journalSourcesDesc: "Configure the daily-notes directory and optional external import directories.",
+        moodMetadataPath: "Mood metadata path",
+        moodMetadataPathDesc: "Vault-relative JSON path. JSON is the primary mood store.",
+        mirrorMood: "Mirror mood to frontmatter",
+        mirrorMoodDesc: "When enabled, saving a mood writes mood and mood_labels to Markdown.",
+        reminder: "Daily reminder",
+        reminderDesc: "Show a local reminder when today has no note.",
+        journalTools: "Journal tools",
+        journalToolsDesc: "Open the timeline or inspect external import directories.",
+        openTimeline: "Open timeline",
+        detectImports: "Detect imports",
+        weatherTimezone: "Weather timezone",
+        weatherTimezoneDesc: "IANA timezone used for diary dates and Open-Meteo. auto uses the system timezone.",
+        openCalendar: "Open calendar sidebar",
+        refreshWeather: "Refresh weather for active date",
+        openOnThisDay: "Open On This Day",
+        openTimelineCommand: "Open journal timeline",
+        newDailyCommand: "Open or create today's note",
+        recordMoodCommand: "Record current journal mood",
+        exportMetadataCommand: "Export mood metadata JSON",
+        restoreMetadataCommand: "Restore mood metadata backup",
+        integrityCommand: "Check mood metadata integrity",
+        importFrontmatterCommand: "Import frontmatter mood metadata",
+        detectImportsCommand: "Detect journal import directories"
+      }
+    };
+  }
+});
+
 // src/mood-picker-modal.ts
 var mood_picker_modal_exports = {};
 __export(mood_picker_modal_exports, {
   MoodPickerModal: () => MoodPickerModal
 });
-var Modal, Notice, setIcon, MOOD_LEVELS2, MOOD_LABELS2, moveMoodScore2, MoodPickerModal;
+var Modal, Notice, MOOD_LEVELS2, MOOD_LABELS2, moveMoodScore2, feelingLabel2, moodLabel2, t2, MoodPickerModal;
 var init_mood_picker_modal = __esm({
   "src/mood-picker-modal.ts"() {
     "use strict";
-    ({ Modal, Notice, setIcon } = require("obsidian"));
+    ({ Modal, Notice } = require("obsidian"));
     ({ MOOD_LEVELS: MOOD_LEVELS2, MOOD_LABELS: MOOD_LABELS2, moveMoodScore: moveMoodScore2 } = (init_mood(), __toCommonJS(mood_exports)));
+    ({ feelingLabel: feelingLabel2, moodLabel: moodLabel2, t: t2 } = (init_i18n(), __toCommonJS(i18n_exports)));
     MoodPickerModal = class extends Modal {
       constructor(app, options = {}) {
         super(app);
         this.filePath = options.filePath;
+        this.settings = options.settings || {};
         this.initial = options.initial;
         this.onSave = options.onSave;
         this.score = this.initial?.score ?? null;
@@ -767,40 +1003,43 @@ var init_mood_picker_modal = __esm({
       renderScale() {
         this.step = 1;
         this.contentEl.empty();
-        this.contentEl.createEl("h3", { text: "Record mood" });
-        this.contentEl.createEl("p", { cls: "journal-mood-step", text: "How did today feel?" });
-        const scale = this.contentEl.createDiv({ cls: "journal-mood-scale", attr: { role: "radiogroup", "aria-label": "Mood level" } });
+        this.contentEl.createEl("h3", { text: t2(this.settings, "moodTitle") });
+        this.contentEl.createEl("p", { cls: "journal-mood-step", text: t2(this.settings, "moodQuestion") });
+        const scale = this.contentEl.createDiv({ cls: "journal-mood-scale", attr: { role: "radiogroup", "aria-label": t2(this.settings, "moodQuestion") } });
         MOOD_LEVELS2.forEach((level, index) => {
           const button = scale.createEl("button", {
-            cls: `journal-mood-level journal-mood-level-${level.score}`,
+            cls: "journal-mood-level",
             attr: {
               type: "button",
               role: "radio",
-              "aria-label": level.label,
+              "aria-label": moodLabel2(this.settings, level.score),
               "aria-checked": String(this.score === level.score),
-              tabindex: this.score === level.score || !this.score && index === 2 ? "0" : "-1"
+              tabindex: this.score === level.score || this.score === null && index === 2 ? "0" : "-1"
             }
           });
           button.style.setProperty("--journal-mood-color", level.color);
-          setIcon(button, level.icon);
+          button.createSpan({ cls: "journal-mood-dot", attr: { "aria-hidden": "true" } });
+          button.createSpan({ cls: "journal-mood-level-label", text: moodLabel2(this.settings, level.score) });
           button.addEventListener("click", () => {
             this.score = level.score;
             this.renderLabels();
           });
         });
-        const hint = this.contentEl.createDiv({ cls: "journal-mood-selected" });
-        hint.setText(this.score === null ? "Choose a level" : MOOD_LEVELS2.find((level) => level.score === this.score).label);
+        this.contentEl.createDiv({
+          cls: "journal-mood-selected",
+          text: this.score === null ? t2(this.settings, "chooseLevel") : `${t2(this.settings, "selected")}: ${moodLabel2(this.settings, this.score)}`
+        });
       }
       renderLabels() {
         this.step = 2;
         this.contentEl.empty();
-        this.contentEl.createEl("h3", { text: "Add feelings" });
-        this.contentEl.createEl("p", { cls: "journal-mood-step", text: "Choose any that fit" });
-        const group = this.contentEl.createDiv({ cls: "journal-mood-labels", attr: { role: "group", "aria-label": "Feeling labels" } });
+        this.contentEl.createEl("h3", { text: t2(this.settings, "addFeelings") });
+        this.contentEl.createEl("p", { cls: "journal-mood-step", text: t2(this.settings, "chooseFeelings") });
+        const group = this.contentEl.createDiv({ cls: "journal-mood-labels", attr: { role: "group", "aria-label": t2(this.settings, "addFeelings") } });
         for (const item of MOOD_LABELS2) {
           const button = group.createEl("button", {
             cls: "journal-mood-label",
-            text: item.label,
+            text: feelingLabel2(this.settings, item.id),
             attr: { type: "button", "aria-pressed": String(this.labels.has(item.id)) }
           });
           button.addEventListener("click", () => {
@@ -810,20 +1049,19 @@ var init_mood_picker_modal = __esm({
           });
         }
         const actions = this.contentEl.createDiv({ cls: "journal-mood-actions" });
-        const back = actions.createEl("button", { text: "Back", attr: { type: "button" } });
+        const back = actions.createEl("button", { text: t2(this.settings, "back"), attr: { type: "button" } });
         back.addEventListener("click", () => this.renderScale());
-        const save = actions.createEl("button", { text: "Save", cls: "mod-cta", attr: { type: "button" } });
+        const save = actions.createEl("button", { text: t2(this.settings, "save"), cls: "mod-cta", attr: { type: "button" } });
         save.addEventListener("click", () => this.save());
         save.focus();
       }
       async save() {
         if (this.score === null) return;
-        const result = { score: this.score, labels: Array.from(this.labels) };
         try {
-          await this.onSave?.(result);
+          await this.onSave?.({ score: this.score, labels: Array.from(this.labels) });
           this.close();
         } catch (error) {
-          new Notice(`Could not save mood: ${error.message || error}`);
+          new Notice(`${t2(this.settings, "moodTitle")}: ${error.message || error}`);
         }
       }
       handleKeydown(event) {
@@ -921,12 +1159,15 @@ __export(journal_timeline_view_exports, {
   JOURNAL_TIMELINE_VIEW: () => JOURNAL_TIMELINE_VIEW,
   JournalTimelineView: () => JournalTimelineView
 });
-var ItemView, Notice2, TFile, setIcon2, calculateJournalStats2, JOURNAL_TIMELINE_VIEW, JournalTimelineView;
+var ItemView, Notice2, TFile, setIcon, calculateJournalStats2, MOOD_LEVELS3, getMoodColor2, formatJournalDate2, getDisplayLanguage2, moodLabel3, t3, isGenericJournalTitle2, JOURNAL_TIMELINE_VIEW, JournalTimelineView;
 var init_journal_timeline_view = __esm({
   "src/journal-timeline-view.ts"() {
     "use strict";
-    ({ ItemView, Notice: Notice2, TFile, setIcon: setIcon2 } = require("obsidian"));
+    ({ ItemView, Notice: Notice2, TFile, setIcon } = require("obsidian"));
     ({ calculateJournalStats: calculateJournalStats2 } = (init_journal_stats(), __toCommonJS(journal_stats_exports)));
+    ({ MOOD_LEVELS: MOOD_LEVELS3, getMoodColor: getMoodColor2 } = (init_mood(), __toCommonJS(mood_exports)));
+    ({ formatJournalDate: formatJournalDate2, getDisplayLanguage: getDisplayLanguage2, moodLabel: moodLabel3, t: t3 } = (init_i18n(), __toCommonJS(i18n_exports)));
+    ({ isGenericJournalTitle: isGenericJournalTitle2 } = (init_excerpt(), __toCommonJS(excerpt_exports)));
     JOURNAL_TIMELINE_VIEW = "journal-timeline-view";
     JournalTimelineView = class extends ItemView {
       constructor(leaf, plugin) {
@@ -934,22 +1175,42 @@ var init_journal_timeline_view = __esm({
         this.plugin = plugin;
         this.index = plugin.journalIndex;
         this.filter = {};
+        this.filterMenuOpen = false;
+        this.renderToken = 0;
+        this.thumbnailObserver = null;
+        this.thumbnailVisibilityChecks = /* @__PURE__ */ new Map();
+        this.thumbnailScrollTimer = null;
+        this.thumbnailScrollHandler = () => {
+          if (this.thumbnailScrollTimer) return;
+          this.thumbnailScrollTimer = setTimeout(() => {
+            this.thumbnailScrollTimer = null;
+            for (const check of this.thumbnailVisibilityChecks.values()) check();
+          }, 50);
+        };
       }
       getViewType() {
         return JOURNAL_TIMELINE_VIEW;
       }
       getDisplayText() {
-        return "Journal timeline";
+        return t3(this.plugin.settings, "timelineTitle");
       }
       getIcon() {
         return "list";
       }
       async onOpen() {
+        this.contentEl.addEventListener("scroll", this.thumbnailScrollHandler, { passive: true });
         this.unsubscribe = this.index.subscribe(() => this.render());
         await this.index.refresh(this.plugin.settings);
         this.render();
       }
       onClose() {
+        this.renderToken++;
+        this.thumbnailObserver?.disconnect();
+        this.thumbnailObserver = null;
+        this.contentEl.removeEventListener("scroll", this.thumbnailScrollHandler);
+        if (this.thumbnailScrollTimer) clearTimeout(this.thumbnailScrollTimer);
+        this.thumbnailScrollTimer = null;
+        this.thumbnailVisibilityChecks.clear();
         this.unsubscribe?.();
         this.unsubscribe = null;
       }
@@ -957,34 +1218,115 @@ var init_journal_timeline_view = __esm({
         const root = this.contentEl;
         root.empty();
         root.addClass("journal-timeline-view");
+        this.renderToken++;
         const header = root.createDiv({ cls: "journal-timeline-header" });
         const heading = header.createDiv({ cls: "journal-timeline-heading" });
-        heading.createEl("h2", { text: "Journal timeline" });
-        heading.createDiv({ cls: "journal-timeline-count", text: `${this.index.filter(this.filter).length}` });
+        heading.createEl("h2", { text: t3(this.plugin.settings, "timelineTitle") });
+        heading.createDiv({ cls: "journal-timeline-count", text: String(this.index.filter(this.filter).length) });
         const actions = header.createDiv({ cls: "journal-timeline-actions" });
-        const moodButton = actions.createEl("button", { attr: { type: "button", "aria-label": "Record current journal mood", title: "Record current journal mood" } });
-        setIcon2(moodButton, "heart-pulse");
+        const moodButton = actions.createEl("button", {
+          attr: { type: "button", "aria-label": t3(this.plugin.settings, "recordMood"), title: t3(this.plugin.settings, "recordMood") }
+        });
+        setIcon(moodButton, "heart-pulse");
         moodButton.addEventListener("click", () => this.plugin.recordCurrentMood());
-        const newButton = actions.createEl("button", { attr: { type: "button", "aria-label": "Create journal entry", title: "Create journal entry" } });
-        setIcon2(newButton, "file-plus-2");
-        newButton.addEventListener("click", () => this.plugin.createJournalEntry());
+        const newButton = actions.createEl("button", {
+          attr: { type: "button", "aria-label": t3(this.plugin.settings, "createDailyNote"), title: t3(this.plugin.settings, "createDailyNote") }
+        });
+        setIcon(newButton, "file-plus-2");
+        newButton.addEventListener("click", () => this.plugin.createDailyNoteForToday());
         this.renderFilters(root);
         this.renderStats(root);
-        const list = root.createDiv({ cls: "journal-timeline-list" });
-        const entries = this.index.filter(this.filter);
-        if (entries.length === 0) {
-          list.createDiv({ cls: "journal-timeline-empty", text: "No journal entries match the current filters." });
-          return;
+        this.renderList(root.createDiv({ cls: "journal-timeline-list" }));
+      }
+      renderFilters(root) {
+        const filters = root.createDiv({ cls: "journal-timeline-filter-area" });
+        const row = filters.createDiv({ cls: "journal-timeline-filter-row" });
+        const query = row.createEl("input", {
+          attr: { type: "search", placeholder: t3(this.plugin.settings, "searchJournal"), "aria-label": t3(this.plugin.settings, "searchJournal") }
+        });
+        query.value = this.filter.query ?? "";
+        query.addEventListener("input", () => {
+          this.filter.query = query.value || void 0;
+          this.updateResults();
+        });
+        const filterButton = row.createEl("button", {
+          attr: {
+            type: "button",
+            "aria-label": this.filterMenuOpen ? t3(this.plugin.settings, "closeFilters") : t3(this.plugin.settings, "openFilters"),
+            "aria-expanded": String(this.filterMenuOpen),
+            title: this.filterMenuOpen ? t3(this.plugin.settings, "closeFilters") : t3(this.plugin.settings, "openFilters")
+          }
+        });
+        setIcon(filterButton, "list-filter");
+        filterButton.addEventListener("click", () => {
+          this.filterMenuOpen = !this.filterMenuOpen;
+          this.render();
+        });
+        const menu = filters.createDiv({ cls: "journal-timeline-filter-menu" });
+        if (!this.filterMenuOpen) menu.addClass("is-hidden");
+        const from = menu.createEl("input", { attr: { type: "date", "aria-label": t3(this.plugin.settings, "fromDate"), title: t3(this.plugin.settings, "fromDate") } });
+        from.value = this.filter.from ?? "";
+        from.addEventListener("change", () => {
+          this.filter.from = from.value || void 0;
+          this.updateResults();
+        });
+        const to = menu.createEl("input", { attr: { type: "date", "aria-label": t3(this.plugin.settings, "toDate"), title: t3(this.plugin.settings, "toDate") } });
+        to.value = this.filter.to ?? "";
+        to.addEventListener("change", () => {
+          this.filter.to = to.value || void 0;
+          this.updateResults();
+        });
+        const mood = menu.createEl("select", { attr: { "aria-label": t3(this.plugin.settings, "allMoods"), title: t3(this.plugin.settings, "allMoods") } });
+        mood.createEl("option", { text: t3(this.plugin.settings, "allMoods"), attr: { value: "" } });
+        for (const level of MOOD_LEVELS3) {
+          const option = mood.createEl("option", { text: moodLabel3(this.plugin.settings, level.score), attr: { value: String(level.score) } });
+          option.style.color = level.color;
         }
-        for (const entry of entries) this.renderEntry(list, entry);
+        mood.value = this.filter.moodScore === void 0 ? "" : String(this.filter.moodScore);
+        mood.addEventListener("change", () => {
+          this.filter.moodScore = mood.value === "" ? void 0 : Number(mood.value);
+          this.updateResults();
+        });
+        const favorite = menu.createEl("label", { cls: "journal-timeline-favorite-filter" });
+        const checkbox = favorite.createEl("input", { attr: { type: "checkbox" } });
+        checkbox.checked = Boolean(this.filter.favoriteOnly);
+        favorite.createSpan({ text: t3(this.plugin.settings, "favoritesOnly") });
+        checkbox.addEventListener("change", () => {
+          this.filter.favoriteOnly = checkbox.checked;
+          this.updateResults();
+        });
+        const clear = menu.createEl("button", { attr: { type: "button", "aria-label": t3(this.plugin.settings, "clearFilters"), title: t3(this.plugin.settings, "clearFilters") } });
+        setIcon(clear, "x");
+        clear.addEventListener("click", () => {
+          this.filter = {};
+          this.updateResults();
+          this.render();
+        });
+        this.renderFilterSummary(filters);
+      }
+      renderFilterSummary(root) {
+        const active = [];
+        if (this.filter.from) active.push({ key: "from", label: `${t3(this.plugin.settings, "fromDate")}: ${this.filter.from}` });
+        if (this.filter.to) active.push({ key: "to", label: `${t3(this.plugin.settings, "toDate")}: ${this.filter.to}` });
+        if (this.filter.moodScore !== void 0) active.push({ key: "moodScore", label: moodLabel3(this.plugin.settings, this.filter.moodScore) });
+        if (this.filter.favoriteOnly) active.push({ key: "favoriteOnly", label: t3(this.plugin.settings, "favorite") });
+        if (active.length === 0) return;
+        const summary = root.createDiv({ cls: "journal-timeline-filter-summary" });
+        for (const item of active) {
+          const chip = summary.createEl("button", { cls: "journal-filter-chip", text: `${item.label} \xD7`, attr: { type: "button", "aria-label": `${t3(this.plugin.settings, "clearFilters")}: ${item.label}` } });
+          chip.addEventListener("click", () => {
+            delete this.filter[item.key];
+            this.render();
+          });
+        }
       }
       renderStats(root) {
         const stats = calculateJournalStats2(this.index.getEntries());
-        const section = root.createDiv({ cls: "journal-timeline-stats", attr: { "aria-label": "Journal statistics" } });
+        const section = root.createDiv({ cls: "journal-timeline-stats", attr: { "aria-label": t3(this.plugin.settings, "moodTrend") } });
         const values = [
-          ["Current streak", `${stats.currentStreak} days`],
-          ["Longest streak", `${stats.longestStreak} days`],
-          ["This month", `${stats.monthCompletionRate}%`]
+          [t3(this.plugin.settings, "currentStreak"), `${stats.currentStreak}`],
+          [t3(this.plugin.settings, "longestStreak"), `${stats.longestStreak}`],
+          [t3(this.plugin.settings, "thisMonth"), `${stats.monthCompletionRate}%`]
         ];
         for (const [label, value] of values) {
           const item = section.createDiv({ cls: "journal-stat" });
@@ -992,94 +1334,64 @@ var init_journal_timeline_view = __esm({
           item.createDiv({ cls: "journal-stat-label", text: label });
         }
         const trend = section.createDiv({ cls: "journal-stat-trend" });
-        trend.createDiv({ cls: "journal-stat-label", text: "Mood trend" });
-        const trendText = stats.trend.map((item) => `${item.date.slice(5)} ${item.score === void 0 ? "-" : item.score > 0 ? `+${item.score}` : item.score}`).join(" | ");
-        trend.createDiv({ text: trendText || "No mood records" });
-      }
-      renderFilters(root) {
-        const filters = root.createDiv({ cls: "journal-timeline-filters" });
-        const query = filters.createEl("input", { attr: { type: "search", placeholder: "Search journal", "aria-label": "Search journal" } });
-        query.value = this.filter.query ?? "";
-        query.addEventListener("input", () => {
-          this.filter.query = query.value;
-          this.updateResults();
-        });
-        const from = filters.createEl("input", { attr: { type: "date", "aria-label": "From date", title: "From date" } });
-        from.value = this.filter.from ?? "";
-        from.addEventListener("change", () => {
-          this.filter.from = from.value || void 0;
-          this.updateResults();
-        });
-        const to = filters.createEl("input", { attr: { type: "date", "aria-label": "To date", title: "To date" } });
-        to.value = this.filter.to ?? "";
-        to.addEventListener("change", () => {
-          this.filter.to = to.value || void 0;
-          this.updateResults();
-        });
-        const source = filters.createEl("select", { attr: { "aria-label": "Journal source", title: "Journal source" } });
-        source.createEl("option", { text: "All sources", attr: { value: "" } });
-        for (const item of this.index.sources) source.createEl("option", { text: item.label || item.path, attr: { value: item.id } });
-        source.value = this.filter.sourceId ?? "";
-        source.addEventListener("change", () => {
-          this.filter.sourceId = source.value || void 0;
-          this.updateResults();
-        });
-        const mood = filters.createEl("select", { attr: { "aria-label": "Mood filter", title: "Mood filter" } });
-        mood.createEl("option", { text: "All moods", attr: { value: "" } });
-        for (const score of [-2, -1, 0, 1, 2]) mood.createEl("option", { text: `Mood ${score > 0 ? "+" : ""}${score}`, attr: { value: String(score) } });
-        mood.value = this.filter.moodScore === void 0 ? "" : String(this.filter.moodScore);
-        mood.addEventListener("change", () => {
-          this.filter.moodScore = mood.value === "" ? void 0 : Number(mood.value);
-          this.updateResults();
-        });
-        const favorite = filters.createEl("label", { cls: "journal-timeline-favorite-filter" });
-        const checkbox = favorite.createEl("input", { attr: { type: "checkbox" } });
-        checkbox.checked = Boolean(this.filter.favoriteOnly);
-        favorite.createSpan({ text: "Favorites" });
-        checkbox.addEventListener("change", () => {
-          this.filter.favoriteOnly = checkbox.checked;
-          this.updateResults();
-        });
-        const clear = filters.createEl("button", { attr: { type: "button", "aria-label": "Clear journal filters", title: "Clear filters" } });
-        setIcon2(clear, "x");
-        clear.addEventListener("click", () => {
-          this.filter = {};
-          this.render();
-        });
+        trend.createDiv({ cls: "journal-stat-label", text: t3(this.plugin.settings, "moodTrend") });
+        const grid = trend.createDiv({ cls: "journal-stat-trend-grid" });
+        const recent = stats.trend.slice(-7);
+        for (const item of recent) {
+          const cell = grid.createDiv({ cls: "journal-stat-trend-cell" });
+          cell.style.backgroundColor = getMoodColor2(item.score);
+          cell.setAttribute("aria-label", `${item.date}: ${item.score === void 0 ? t3(this.plugin.settings, "noMood") : moodLabel3(this.plugin.settings, item.score)}`);
+          cell.title = cell.getAttribute("aria-label");
+        }
       }
       updateResults() {
-        const entries = this.index.filter(this.filter);
         const count = this.contentEl.querySelector(".journal-timeline-count");
+        const entries = this.index.filter(this.filter);
         if (count) count.setText(String(entries.length));
         const list = this.contentEl.querySelector(".journal-timeline-list");
-        if (!list) return;
+        if (list) this.renderList(list, entries);
+        const area = this.contentEl.querySelector(".journal-timeline-filter-area");
+        if (area) {
+          const oldSummary = area.querySelector(".journal-timeline-filter-summary");
+          oldSummary?.remove();
+          this.renderFilterSummary(area);
+        }
+      }
+      renderList(list, entries = this.index.filter(this.filter)) {
+        this.renderToken++;
+        this.thumbnailObserver?.disconnect();
+        this.thumbnailObserver = null;
+        this.thumbnailVisibilityChecks.clear();
         list.empty();
         if (entries.length === 0) {
-          list.createDiv({ cls: "journal-timeline-empty", text: "No journal entries match the current filters." });
+          list.createDiv({ cls: "journal-timeline-empty", text: t3(this.plugin.settings, "noResults") });
           return;
         }
-        for (const entry of entries) this.renderEntry(list, entry);
+        for (const entry of entries) this.renderEntry(list, entry, this.renderToken);
       }
-      renderEntry(list, entry) {
-        const card = list.createEl("article", { cls: "journal-timeline-entry" });
+      renderEntry(list, entry, token) {
+        const imageLinks = entry.attachments.filter((link) => this.plugin.thumbnailService?.isImageLink(link));
+        const scoreClass = entry.mood ? `mood-score-${entry.mood.score}` : "mood-score-none";
+        const card = list.createEl("article", { cls: `journal-timeline-entry ${scoreClass}${imageLinks.length ? " has-thumbnail" : ""}` });
         card.tabIndex = 0;
         card.dataset.path = entry.path;
-        const marker = card.createDiv({ cls: `journal-timeline-marker mood-${entry.mood?.score ?? "none"}` });
-        marker.setAttribute("aria-hidden", "true");
         const body = card.createDiv({ cls: "journal-timeline-entry-body" });
         const top = body.createDiv({ cls: "journal-timeline-entry-top" });
-        top.createEl("time", { text: entry.date, attr: { datetime: entry.date } });
-        top.createSpan({ cls: "journal-timeline-source", text: entry.sourceId });
-        if (entry.favorite) {
-          const star = top.createSpan({ cls: "journal-timeline-favorite", text: "Favorite" });
-          star.setAttribute("aria-label", "Favorite");
-        }
-        body.createEl("h3", { text: entry.title });
+        top.createEl("h3", { cls: "journal-timeline-entry-date", text: formatJournalDate2(entry.date, this.plugin.settings) });
+        top.createEl("time", { cls: "journal-timeline-entry-iso", text: entry.date, attr: { datetime: entry.date } });
+        if (entry.favorite) top.createSpan({ cls: "journal-timeline-favorite", text: t3(this.plugin.settings, "favorite") });
+        if (entry.title && !isGenericJournalTitle2(entry.title, entry.date)) body.createDiv({ cls: "journal-timeline-title", text: entry.title });
         if (entry.excerpt) body.createDiv({ cls: "journal-timeline-excerpt", text: entry.excerpt });
         const meta = body.createDiv({ cls: "journal-timeline-meta" });
-        if (entry.mood) meta.createSpan({ text: `Mood ${entry.mood.score > 0 ? "+" : ""}${entry.mood.score}` });
         if (entry.location?.name) meta.createSpan({ text: entry.location.name });
-        if (entry.attachments.length > 0) meta.createSpan({ text: `${entry.attachments.length} media` });
+        if (imageLinks.length > 0) meta.createSpan({ text: `${imageLinks.length}${t3(this.plugin.settings, "media")}` });
+        let thumbnail;
+        if (imageLinks.length > 0) {
+          thumbnail = card.createDiv({ cls: "journal-timeline-thumbnail" });
+          const image = thumbnail.createEl("img", { attr: { alt: entry.title || entry.date, loading: "lazy" } });
+          if (imageLinks.length > 1) thumbnail.createSpan({ cls: "journal-timeline-thumbnail-count", text: `+${imageLinks.length - 1}` });
+          this.observeThumbnail(card, thumbnail, image, entry, imageLinks, token);
+        }
         const open = () => this.openEntry(entry.path);
         card.addEventListener("click", open);
         card.addEventListener("keydown", (event) => {
@@ -1087,29 +1399,123 @@ var init_journal_timeline_view = __esm({
             event.preventDefault();
             open();
           }
-          if (event.key === "m") this.plugin.openMoodPicker(entry.path);
+          if (event.key.toLowerCase() === "m") {
+            event.preventDefault();
+            this.plugin.openMoodPicker(entry.path);
+          }
         });
+      }
+      observeThumbnail(card, container, image, entry, links, token) {
+        let started = false;
+        const load = async () => {
+          if (started) return;
+          started = true;
+          const result = await this.plugin.thumbnailService.loadFirst(links, entry.path);
+          if (token !== this.renderToken || !container.isConnected || !card.isConnected) return;
+          if (!result) {
+            card.removeClass("has-thumbnail");
+            container.remove();
+            return;
+          }
+          image.src = result.url;
+          container.addClass("is-loaded");
+        };
+        if (typeof IntersectionObserver === "undefined") {
+          load();
+          return;
+        }
+        this.thumbnailObserver ?? (this.thumbnailObserver = new IntersectionObserver((observations) => {
+          for (const observation of observations) {
+            if (!observation.isIntersecting) continue;
+            this.thumbnailObserver.unobserve(observation.target);
+            load();
+          }
+        }, { rootMargin: "160px" }));
+        this.thumbnailObserver.observe(container);
+        const checkVisible = () => {
+          if (token !== this.renderToken || !container.isConnected) return;
+          const rootRect = this.contentEl.getBoundingClientRect();
+          const rect = container.getBoundingClientRect();
+          if (rect.bottom >= rootRect.top - 160 && rect.top <= rootRect.bottom + 160) load();
+        };
+        this.thumbnailVisibilityChecks.set(container, checkVisible);
+        setTimeout(checkVisible, 50);
       }
       async openEntry(path) {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile)) {
-          new Notice2(`Journal file not found: ${path}`);
+          new Notice2(`${t3(this.plugin.settings, "timelineTitle")}: ${path}`);
           return;
         }
-        const leaf = this.app.workspace.getLeaf("split");
-        await leaf.openFile(file);
+        await this.app.workspace.getLeaf("split").openFile(file);
+      }
+    };
+  }
+});
+
+// src/thumbnail-service.ts
+var thumbnail_service_exports = {};
+__export(thumbnail_service_exports, {
+  HEIC_EXTENSIONS: () => HEIC_EXTENSIONS,
+  IMAGE_EXTENSIONS: () => IMAGE_EXTENSIONS,
+  ThumbnailService: () => ThumbnailService
+});
+var IMAGE_EXTENSIONS, HEIC_EXTENSIONS, ThumbnailService;
+var init_thumbnail_service = __esm({
+  "src/thumbnail-service.ts"() {
+    "use strict";
+    IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "heic", "heif"];
+    HEIC_EXTENSIONS = ["heic", "heif"];
+    ThumbnailService = class {
+      constructor(app, heicCache) {
+        __publicField(this, "app");
+        __publicField(this, "heicCache");
+        this.app = app;
+        this.heicCache = heicCache;
+      }
+      isImageFile(file) {
+        return Boolean(file?.extension && IMAGE_EXTENSIONS.includes(String(file.extension).toLowerCase()));
+      }
+      isImageLink(link) {
+        const clean = String(link || "").split("|", 1)[0].split(/[\\/]/).pop() || "";
+        return IMAGE_EXTENSIONS.includes(clean.split(".").pop()?.toLowerCase() || "");
+      }
+      resolve(link, sourcePath) {
+        const file = this.app.metadataCache.getFirstLinkpathDest(String(link).split("|", 1)[0], sourcePath);
+        return this.isImageFile(file) ? file : null;
+      }
+      async load(link, sourcePath, index = 0) {
+        const file = this.resolve(link, sourcePath);
+        if (!file) return null;
+        try {
+          const ext = String(file.extension).toLowerCase();
+          const url = HEIC_EXTENSIONS.includes(ext) ? (await this.heicCache?.getThumbnail(file))?.dataUrl : this.app.vault.getResourcePath(file);
+          return url ? { url, path: file.path, index } : null;
+        } catch (_) {
+          return null;
+        }
+      }
+      async loadFirst(links, sourcePath) {
+        for (let index = 0; index < links.length; index++) {
+          const result = await this.load(links[index], sourcePath, index);
+          if (result) return result;
+        }
+        return null;
       }
     };
   }
 });
 
 // src/plugin.ts
-var { Plugin, ItemView: ItemView2, TFolder, TFile: TFile2, Notice: Notice3, Modal: Modal2, PluginSettingTab, Setting, SuggestModal, requestUrl, setIcon: setIcon3 } = require("obsidian");
+var { Plugin, ItemView: ItemView2, TFolder, TFile: TFile2, Notice: Notice3, Modal: Modal2, PluginSettingTab, Setting, SuggestModal, requestUrl, setIcon: setIcon2 } = require("obsidian");
 var { JournalIndex: JournalIndex2 } = (init_journal_index(), __toCommonJS(journal_index_exports));
 var { MoodStore: MoodStore2 } = (init_mood_store(), __toCommonJS(mood_store_exports));
 var { MoodPickerModal: MoodPickerModal2 } = (init_mood_picker_modal(), __toCommonJS(mood_picker_modal_exports));
 var { JournalTimelineView: JournalTimelineView2, JOURNAL_TIMELINE_VIEW: JOURNAL_TIMELINE_VIEW2 } = (init_journal_timeline_view(), __toCommonJS(journal_timeline_view_exports));
 var { formatDateInTimeZone: formatDateInTimeZone2 } = (init_date_utils(), __toCommonJS(date_utils_exports));
+var { ThumbnailService: ThumbnailService2 } = (init_thumbnail_service(), __toCommonJS(thumbnail_service_exports));
+var { getDisplayLanguage: getDisplayLanguage3, moodLabel: moodLabel4, t: t4 } = (init_i18n(), __toCommonJS(i18n_exports));
+var { getMoodColor: getMoodColor3 } = (init_mood(), __toCommonJS(mood_exports));
 var VIEW_TYPE = "calendar-sidebar-view";
 var OVERLAY_ATTR = "data-cal-weather-overlay";
 var DEFAULT_SETTINGS = {
@@ -1131,6 +1537,8 @@ var DEFAULT_SETTINGS = {
   // Open-Meteo timezone mode
   weatherLanguage: "zh",
   // 'en' | 'zh' — display language for weather labels
+  displayLanguage: "zh",
+  // global plugin language; migrated from weatherLanguage
   // --- EXIF metadata ---
   showExif: true,
   // show EXIF metadata tooltip on image hover
@@ -1171,6 +1579,7 @@ var CalendarSidebarPlugin = class extends Plugin {
     this.weatherService = new WeatherService(this);
     this.exifCache = new ImageMetadataCache(this.app);
     this.heicCache = new HeicCache(this.app);
+    this.thumbnailService = new ThumbnailService2(this.app, this.heicCache);
     this.geocoder = new ReverseGeocoder();
     try {
       const path = require("path");
@@ -1186,12 +1595,12 @@ var CalendarSidebarPlugin = class extends Plugin {
     this.registerView(JOURNAL_TIMELINE_VIEW2, (leaf) => new JournalTimelineView2(leaf, this));
     this.addCommand({
       id: "open-calendar-sidebar",
-      name: "Open Calendar Sidebar",
+      name: t4(this.settings, "openCalendar"),
       callback: () => this.activateView()
     });
     this.addCommand({
       id: "refresh-weather",
-      name: "Refresh Weather for Active Date",
+      name: t4(this.settings, "refreshWeather"),
       callback: () => {
         const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
         if (leaf?.view) {
@@ -1203,7 +1612,7 @@ var CalendarSidebarPlugin = class extends Plugin {
     });
     this.addCommand({
       id: "open-on-this-day",
-      name: "Open On This Day / \u6253\u5F00\u53BB\u5E74\u4ECA\u65E5",
+      name: t4(this.settings, "openOnThisDay"),
       callback: () => {
         const today = /* @__PURE__ */ new Date();
         this.openOnThisDay(today.getMonth() + 1, today.getDate());
@@ -1211,35 +1620,30 @@ var CalendarSidebarPlugin = class extends Plugin {
     });
     this.addCommand({
       id: "open-journal-timeline",
-      name: "Open Journal Timeline",
+      name: t4(this.settings, "openTimelineCommand"),
       callback: () => this.activateTimeline()
     });
     this.addCommand({
       id: "new-daily-note",
-      name: "Create Daily Note",
+      name: t4(this.settings, "newDailyCommand"),
       callback: () => this.createDailyNoteForToday()
     });
     this.addCommand({
-      id: "new-journal-entry",
-      name: "Create Journal Entry",
-      callback: () => this.createJournalEntry()
-    });
-    this.addCommand({
       id: "record-current-mood",
-      name: "Record Current Journal Mood",
+      name: t4(this.settings, "recordMoodCommand"),
       callback: () => this.recordCurrentMood()
     });
     this.addCommand({
       id: "export-journal-metadata",
-      name: "Export Journal Metadata JSON",
+      name: t4(this.settings, "exportMetadataCommand"),
       callback: async () => {
         const path = await this.moodStore.exportTo();
-        new Notice3(`Journal metadata exported to ${path}`);
+        new Notice3(t4(this.settings, "metadataExported", { path }));
       }
     });
     this.addCommand({
       id: "restore-journal-metadata-backup",
-      name: "Restore Journal Metadata Backup",
+      name: t4(this.settings, "restoreMetadataCommand"),
       callback: async () => {
         try {
           const backupPath = `${this.moodStore.metadataPath}.bak`;
@@ -1247,7 +1651,7 @@ var CalendarSidebarPlugin = class extends Plugin {
           await this.moodStore.restoreFrom(raw);
           await this.journalIndex.refresh(this.settings);
           this.refreshJournalViews();
-          new Notice3("Journal metadata backup restored");
+          new Notice3(t4(this.settings, "metadataRestored"));
         } catch (error) {
           new Notice3(`Could not restore journal metadata: ${error.message || error}`);
         }
@@ -1255,15 +1659,15 @@ var CalendarSidebarPlugin = class extends Plugin {
     });
     this.addCommand({
       id: "check-journal-metadata-integrity",
-      name: "Check Journal Metadata Integrity",
+      name: t4(this.settings, "integrityCommand"),
       callback: async () => {
         const result = await this.moodStore.checkIntegrity();
-        new Notice3(result.valid && result.missingFiles.length === 0 ? "Journal metadata is valid" : `Metadata check: ${result.invalidRecords.length} invalid, ${result.missingFiles.length} missing files`);
+        new Notice3(result.valid && result.missingFiles.length === 0 ? t4(this.settings, "metadataValid") : `Metadata check: ${result.invalidRecords.length} invalid, ${result.missingFiles.length} missing files`);
       }
     });
     this.addCommand({
       id: "import-frontmatter-mood-metadata",
-      name: "Import Frontmatter Mood Metadata",
+      name: t4(this.settings, "importFrontmatterCommand"),
       callback: async () => {
         const count = await this.moodStore.importFrontmatter(
           this.journalIndex.getEntries().map((entry) => entry.path),
@@ -1271,12 +1675,12 @@ var CalendarSidebarPlugin = class extends Plugin {
         );
         await this.journalIndex.refresh(this.settings);
         this.refreshJournalViews();
-        new Notice3(`Imported ${count} mood records`);
+        new Notice3(t4(this.settings, "importedMoods", { count }));
       }
     });
     this.addCommand({
       id: "detect-journal-import-directories",
-      name: "Detect Journal Import Directories",
+      name: t4(this.settings, "detectImportsCommand"),
       callback: async () => {
         const result = await this.journalIndex.detectSources(this.settings);
         const fields = Object.entries(result.fields).map(([key, value]) => `${key}: ${value}`).join(", ");
@@ -1338,17 +1742,6 @@ var CalendarSidebarPlugin = class extends Plugin {
     await this.app.workspace.getLeaf("split").openFile(file);
     await this.journalIndex.refreshFile(path, this.settings);
   }
-  async createJournalEntry() {
-    const source = this.journalIndex.resolveSources(this.settings).find((item) => item.type === "journal" || item.type === "external") || { path: "Calendar/Entries" };
-    await this.ensureFolder(source.path);
-    const stamp = /* @__PURE__ */ new Date();
-    const date = _formatDate(stamp);
-    const time = `${String(stamp.getHours()).padStart(2, "0")}-${String(stamp.getMinutes()).padStart(2, "0")}`;
-    const path = `${source.path}/${date} ${time}.md`;
-    const file = await this.ensureJournalFile(path, "");
-    await this.app.workspace.getLeaf("split").openFile(file);
-    await this.journalIndex.refreshFile(path, this.settings);
-  }
   async recordCurrentMood() {
     const activeFile = this.app.workspace.activeLeaf?.view?.file;
     const sources = this.journalIndex.resolveSources(this.settings);
@@ -1363,11 +1756,12 @@ var CalendarSidebarPlugin = class extends Plugin {
     new MoodPickerModal2(this.app, {
       filePath: path,
       initial: this.moodStore.get(path) || entry?.mood,
+      settings: this.settings,
       onSave: async ({ score, labels }) => {
         await this.moodStore.set(path, score, labels, this.settings);
         await this.journalIndex.refreshFile(path, this.settings);
         this.refreshJournalViews();
-        new Notice3(`Mood saved for ${path}`);
+        new Notice3(`${t4(this.settings, "moodSaved")}: ${path}`);
       }
     }).open();
   }
@@ -1381,7 +1775,7 @@ var CalendarSidebarPlugin = class extends Plugin {
     if (now.getHours() !== Number(this.settings.reminderHour ?? 21) || now.getMinutes() !== 0) return;
     const date = _formatDate(now);
     if (this.journalIndex.getEntries().some((entry) => entry.date === date)) return;
-    new Notice3("No journal entry for today");
+    new Notice3(t4(this.settings, "dailyReminder"));
   }
   async ensureFolder(path) {
     const normalized = String(path || "").replace(/\\/g, "/").replace(/\/$/, "");
@@ -1519,10 +1913,13 @@ var CalendarSidebarPlugin = class extends Plugin {
     this.weatherCache = data.weatherCache || {};
     this._cleanupWeatherCache();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings.displayLanguage = getDisplayLanguage3({ displayLanguage: data.displayLanguage, weatherLanguage: data.weatherLanguage });
+    this.settings.weatherLanguage = this.settings.displayLanguage;
     delete this.settings.weatherCache;
   }
   async saveSettings() {
     const settings = { ...this.settings };
+    settings.weatherLanguage = settings.displayLanguage || settings.weatherLanguage || "zh";
     this.moodStore?.configure(settings);
     await this._enqueueDataWrite((data) => {
       Object.assign(data, settings);
@@ -2141,64 +2538,82 @@ button.cal-weather-refresh:hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--journal-mood-color, var(--text-muted));
-  opacity: 0.9;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.cal-mood-button svg { width: 12px; height: 12px; }
-.cal-mood-button:hover { color: var(--text-normal); opacity: 1; }
-.cal-mood-button.mood-2 { --journal-mood-color: #3689a4; }
-.cal-mood-button.mood-1 { --journal-mood-color: #4d9b70; }
-.cal-mood-button.mood-0 { --journal-mood-color: #a18442; }
-.cal-mood-button.mood--1 { --journal-mood-color: #d97745; }
-.cal-mood-button.mood--2 { --journal-mood-color: #c2415d; }
-.journal-timeline-view { padding: 14px; overflow: auto; }
-.journal-timeline-header, .journal-timeline-entry-top, .journal-timeline-meta, .journal-timeline-actions, .journal-timeline-filters, .journal-mood-actions { display: flex; align-items: center; }
-.journal-timeline-header { justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.journal-timeline-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.journal-timeline-heading h2 { margin: 0; font-size: 18px; }
-.journal-timeline-count { color: var(--text-muted); font-size: 12px; }
-.journal-timeline-actions { gap: 4px; }
-.journal-timeline-actions button, .journal-timeline-filters > button { width: 28px; height: 28px; padding: 5px; }
-.journal-timeline-filters { gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-.journal-timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
-.journal-stat { padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border); min-width: 0; }
+.cal-mood-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--journal-mood-color); }
+.cal-mood-button:hover .cal-mood-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--journal-mood-color) 35%, transparent); }
+.cal-mood-button.mood-2 { --journal-mood-color: #4b93d1; }
+.cal-mood-button.mood-1 { --journal-mood-color: #56a86a; }
+.cal-mood-button.mood-0 { --journal-mood-color: #d9bd4c; }
+.cal-mood-button.mood--1 { --journal-mood-color: #e68a3b; }
+.cal-mood-button.mood--2 { --journal-mood-color: #d84b76; }
+.journal-timeline-view { box-sizing: border-box; width: 100%; min-width: 0; padding: 14px; overflow-x: hidden; overflow-y: auto; }
+.journal-timeline-header, .journal-timeline-entry-top, .journal-timeline-meta, .journal-timeline-actions, .journal-timeline-filter-row, .journal-timeline-filter-menu, .journal-mood-actions { display: flex; align-items: center; min-width: 0; }
+.journal-timeline-header { justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.journal-timeline-heading { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; }
+.journal-timeline-heading h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font-size: 18px; }
+.journal-timeline-count { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
+.journal-timeline-actions { flex: 0 0 auto; gap: 4px; }
+.journal-timeline-actions button, .journal-timeline-filter-row > button { width: 28px; height: 28px; padding: 5px; flex: 0 0 28px; }
+.journal-timeline-filter-area, .journal-timeline-filter-row, .journal-timeline-filter-summary { width: 100%; min-width: 0; }
+.journal-timeline-filter-row { gap: 6px; margin-bottom: 6px; }
+.journal-timeline-filter-row input[type='search'] { flex: 1 1 auto; width: 1px; min-width: 0; }
+.journal-timeline-filter-menu { flex-wrap: wrap; gap: 6px; padding: 7px; margin-bottom: 6px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary); }
+.journal-timeline-filter-menu.is-hidden { display: none; }
+.journal-timeline-filter-menu input[type='date'], .journal-timeline-filter-menu select { flex: 1 1 100px; min-width: 0; max-width: 160px; }
+.journal-timeline-favorite-filter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--text-muted); font-size: 12px; }
+.journal-timeline-filter-summary { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.journal-filter-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 7px; font-size: 11px; }
+.journal-timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; min-width: 0; margin-bottom: 12px; }
+.journal-stat { min-width: 0; overflow: hidden; padding: 6px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .journal-stat-value { font-size: 15px; color: var(--text-normal); }
-.journal-stat-label { color: var(--text-muted); font-size: 11px; }
-.journal-stat-trend { grid-column: 1 / -1; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-filters input[type='search'] { flex: 1 1 180px; min-width: 120px; }
-.journal-timeline-filters input[type='date'], .journal-timeline-filters select { flex: 0 1 140px; min-width: 0; }
-.journal-timeline-favorite-filter { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 12px; }
-.journal-timeline-list { display: grid; gap: 8px; }
-.journal-timeline-entry { display: flex; gap: 10px; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 7px; cursor: pointer; background: var(--background-primary); }
-.journal-timeline-entry:hover, .journal-timeline-entry:focus-visible { border-color: var(--interactive-accent); outline: none; }
-.journal-timeline-marker { width: 5px; border-radius: 3px; flex: 0 0 5px; background: var(--background-modifier-border); }
-.journal-timeline-marker.mood-2 { background: #3689a4; }
-.journal-timeline-marker.mood-1 { background: #4d9b70; }
-.journal-timeline-marker.mood-0 { background: #a18442; }
-.journal-timeline-marker.mood--1 { background: #d97745; }
-.journal-timeline-marker.mood--2 { background: #c2415d; }
-.journal-timeline-entry-body { min-width: 0; flex: 1; }
-.journal-timeline-entry-top { gap: 8px; color: var(--text-muted); font-size: 11px; }
-.journal-timeline-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-favorite { color: var(--text-accent); }
-.journal-timeline-entry h3 { margin: 4px 0; font-size: 14px; }
-.journal-timeline-excerpt { color: var(--text-muted); font-size: 12px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-meta { gap: 10px; color: var(--text-faint); font-size: 11px; margin-top: 6px; }
-.journal-timeline-empty { color: var(--text-muted); padding: 28px 8px; text-align: center; }
+.journal-stat-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11px; }
+.journal-stat-trend { grid-column: 1 / -1; min-width: 0; }
+.journal-stat-trend-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-top: 4px; }
+.journal-stat-trend-cell { min-width: 0; height: 7px; border-radius: 3px; }
+.journal-timeline-list { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; gap: 8px; }
+.journal-timeline-entry { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; gap: 10px; padding: 10px; border: 1px solid var(--background-modifier-border); border-left: 4px solid var(--background-modifier-border); border-radius: 7px; cursor: pointer; background: var(--background-primary); }
+.journal-timeline-entry.has-thumbnail { grid-template-columns: minmax(0, 1fr) 88px; }
+.journal-timeline-entry.mood-score-2 { border-left-color: #4b93d1; }
+.journal-timeline-entry.mood-score-1 { border-left-color: #56a86a; }
+.journal-timeline-entry.mood-score-0 { border-left-color: #d9bd4c; }
+.journal-timeline-entry.mood-score--1 { border-left-color: #e68a3b; }
+.journal-timeline-entry.mood-score--2 { border-left-color: #d84b76; }
+.journal-timeline-entry:hover, .journal-timeline-entry:focus-visible { border-right-color: var(--interactive-accent); outline: none; }
+.journal-timeline-entry-body { min-width: 0; overflow: hidden; }
+.journal-timeline-entry-top { flex-wrap: wrap; gap: 4px 7px; min-width: 0; color: var(--text-muted); }
+.journal-timeline-entry-date { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0; overflow: hidden; color: var(--text-normal); font-size: 14px; font-weight: 600; }
+.journal-timeline-entry-iso { display: none; }
+.journal-timeline-favorite { flex: 0 0 auto; color: var(--text-accent); font-size: 11px; }
+.journal-timeline-title { min-width: 0; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-normal); font-size: 13px; }
+.journal-timeline-excerpt { min-width: 0; max-width: 100%; margin-top: 4px; overflow: hidden; overflow-wrap: anywhere; color: var(--text-muted); font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.journal-timeline-meta { flex-wrap: wrap; gap: 5px 10px; min-width: 0; margin-top: 6px; overflow-wrap: anywhere; color: var(--text-faint); font-size: 11px; }
+.journal-timeline-thumbnail { position: relative; width: 88px; height: 88px; min-width: 88px; overflow: hidden; border-radius: 5px; background: var(--background-secondary); }
+.journal-timeline-thumbnail img { display: block; width: 88px; height: 88px; object-fit: cover; opacity: 0; transition: opacity 0.15s ease; }
+.journal-timeline-thumbnail.is-loaded img { opacity: 1; }
+.journal-timeline-thumbnail-count { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 10px; }
+.journal-timeline-empty { min-width: 0; padding: 28px 8px; overflow-wrap: anywhere; color: var(--text-muted); text-align: center; }
 .journal-mood-picker-modal .modal-content { min-width: 320px; }
 .journal-mood-picker h3 { margin-bottom: 4px; }
 .journal-mood-step { color: var(--text-muted); margin: 0 0 16px; }
-.journal-mood-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.journal-mood-level { min-height: 64px; color: var(--journal-mood-color); border: 1px solid var(--background-modifier-border); background: var(--background-secondary); }
-.journal-mood-level:hover, .journal-mood-level:focus-visible { border-color: var(--journal-mood-color); outline: none; }
-.journal-mood-level svg { width: 28px; height: 28px; }
+.journal-mood-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.journal-mood-level { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 76px; gap: 6px; color: var(--journal-mood-color); border: 1px solid var(--background-modifier-border); background: var(--background-secondary); }
+.journal-mood-level:hover, .journal-mood-level:focus-visible, .journal-mood-level[aria-checked='true'] { border-color: var(--journal-mood-color); outline: none; }
+.journal-mood-level[aria-checked='true'] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--journal-mood-color) 35%, transparent); }
+.journal-mood-level[aria-checked='true']::after { content: '\u2713'; position: absolute; top: 3px; right: 5px; font-size: 12px; }
+.journal-mood-dot { display: block; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%; background: var(--journal-mood-color); }
+.journal-mood-level-label { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .journal-mood-selected { color: var(--text-muted); text-align: center; font-size: 12px; margin-top: 10px; }
 .journal-mood-labels { display: flex; flex-wrap: wrap; gap: 7px; }
 .journal-mood-label[aria-pressed='true'] { border-color: var(--interactive-accent); color: var(--text-accent); background: var(--background-modifier-hover); }
 .journal-mood-actions { justify-content: space-between; gap: 8px; margin-top: 22px; }
+@media (max-width: 420px) {
+  .journal-timeline-view { padding: 10px; }
+  .journal-timeline-entry.has-thumbnail { grid-template-columns: minmax(0, 1fr) 72px; }
+  .journal-timeline-thumbnail, .journal-timeline-thumbnail img { width: 72px; height: 72px; min-width: 72px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .journal-mood-picker *, .journal-timeline-entry { transition: none !important; animation: none !important; }
 }
@@ -3206,7 +3621,7 @@ var HeicCache = class {
    * @returns {Promise<{dataUrl:string, width:number, height:number}|null>}
    */
   async getThumbnail(file) {
-    const key = file.path;
+    const key = `${file.path}:${file.stat?.mtime || 0}`;
     if (this._cache.has(key)) return this._cache.get(key);
     if (this._pending.has(key)) return this._pending.get(key);
     const promise = this._convert(file);
@@ -3262,8 +3677,8 @@ var HeicCache = class {
   }
   invalidate(filePath) {
     if (filePath) {
-      this._cache.delete(filePath);
-      this._pending.delete(filePath);
+      for (const key of this._cache.keys()) if (key.startsWith(`${filePath}:`)) this._cache.delete(key);
+      for (const key of this._pending.keys()) if (key.startsWith(`${filePath}:`)) this._pending.delete(key);
     } else {
       this._cache.clear();
       this._pending.clear();
@@ -3719,11 +4134,12 @@ var CalendarView = class extends ItemView2 {
           cls: `cal-mood-button mood-${mood.score}`,
           attr: {
             type: "button",
-            "aria-label": `Record mood for ${dateStr}`,
-            title: `Mood ${mood.score > 0 ? "+" : ""}${mood.score}`
+            "aria-label": `${t4(this.plugin.settings, "recordMood")}: ${dateStr}`,
+            title: moodLabel4(this.plugin.settings, mood.score)
           }
         });
-        setIcon3(moodButton, "heart");
+        moodButton.style.setProperty("--journal-mood-color", getMoodColor3(mood.score));
+        moodButton.createSpan({ cls: "cal-mood-dot", attr: { "aria-hidden": "true" } });
         moodButton.addEventListener("pointerdown", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3843,7 +4259,7 @@ var CalendarView = class extends ItemView2 {
       cls: "cal-weather-refresh",
       attr: { "aria-label": "Refresh weather", title: "Refresh weather" }
     });
-    setIcon3(refreshBtn, "refresh-cw");
+    setIcon2(refreshBtn, "refresh-cw");
     refreshBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this._performRefresh(cardDate, refreshBtn).catch((err) => {
@@ -3972,19 +4388,8 @@ var CalendarView = class extends ItemView2 {
   async _setBackground(bgEl, link, dateStr) {
     try {
       const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const file = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
-      if (file instanceof TFile2) {
-        const ext = file.extension?.toLowerCase();
-        if (HEIC_EXTS.includes(ext)) {
-          const thumb = await this.plugin.heicCache.getThumbnail(file);
-          if (thumb) {
-            bgEl.style.backgroundImage = `url("${thumb.dataUrl}")`;
-          }
-        } else {
-          const url = this.app.vault.getResourcePath(file);
-          bgEl.style.backgroundImage = `url("${url}")`;
-        }
-      }
+      const result = await this.plugin.thumbnailService.load(link, sourcePath);
+      if (result && bgEl.isConnected) bgEl.style.backgroundImage = `url("${result.url}")`;
     } catch (_) {
     }
   }
@@ -4315,7 +4720,7 @@ var CalendarView = class extends ItemView2 {
       cls: "cal-overlay-refresh",
       attr: { "aria-label": refreshLabel, title: refreshLabel }
     });
-    setIcon3(refreshBtn, "refresh-cw");
+    setIcon2(refreshBtn, "refresh-cw");
     refreshBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this._performOverlayRefresh(dateStr, refreshBtn, overlay).catch((err) => {
@@ -4507,8 +4912,8 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
         if (leaf?.view?.refresh) leaf.view.refresh();
       })
     );
-    containerEl.createEl("h3", { text: "Journal and mood" });
-    new Setting(containerEl).setName("Journal sources").setDesc("JSON array of source directories. Each item uses id, path, type, and optional dateField.").addTextArea((text) => {
+    containerEl.createEl("h3", { text: t4(this.plugin.settings, "journalSources") });
+    new Setting(containerEl).setName(t4(this.plugin.settings, "journalSources")).setDesc(t4(this.plugin.settings, "journalSourcesDesc")).addTextArea((text) => {
       text.setValue(JSON.stringify(this.plugin.settings.journalSources || [], null, 2));
       text.inputEl.rows = 5;
       text.inputEl.addClass("calendar-sidebar-source-json");
@@ -4525,7 +4930,7 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
         }
       });
     });
-    new Setting(containerEl).setName("Mood metadata path").setDesc("Vault-relative JSON path. The JSON file is the primary mood store.").addText((text) => text.setValue(this.plugin.settings.moodMetadataPath).setPlaceholder("Calendar/journal-metadata.json").onChange(async (value) => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "moodMetadataPath")).setDesc(t4(this.plugin.settings, "moodMetadataPathDesc")).addText((text) => text.setValue(this.plugin.settings.moodMetadataPath).setPlaceholder("Calendar/journal-metadata.json").onChange(async (value) => {
       const next = value.trim() || "Calendar/journal-metadata.json";
       this.plugin.settings.moodMetadataPath = next;
       await this.plugin.saveSettings();
@@ -4534,11 +4939,11 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
       await this.plugin.journalIndex.refresh(this.plugin.settings);
       this.plugin.refreshJournalViews();
     }));
-    new Setting(containerEl).setName("Mirror mood to frontmatter").setDesc("When enabled, saving a mood also writes mood and mood_labels to the Markdown frontmatter.").addToggle((toggle) => toggle.setValue(Boolean(this.plugin.settings.mirrorMoodToFrontmatter)).onChange(async (value) => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "mirrorMood")).setDesc(t4(this.plugin.settings, "mirrorMoodDesc")).addToggle((toggle) => toggle.setValue(Boolean(this.plugin.settings.mirrorMoodToFrontmatter)).onChange(async (value) => {
       this.plugin.settings.mirrorMoodToFrontmatter = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Daily reminder").setDesc("Show a local reminder when today has no journal entry.").addToggle((toggle) => toggle.setValue(Boolean(this.plugin.settings.reminderEnabled)).onChange(async (value) => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "reminder")).setDesc(t4(this.plugin.settings, "reminderDesc")).addToggle((toggle) => toggle.setValue(Boolean(this.plugin.settings.reminderEnabled)).onChange(async (value) => {
       this.plugin.settings.reminderEnabled = value;
       await this.plugin.saveSettings();
     })).addExtraButton((button) => button.setIcon("clock-3").setTooltip("Reminder hour").onClick(() => {
@@ -4549,7 +4954,7 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
         this.plugin.saveSettings();
       }
     }));
-    new Setting(containerEl).setName("Journal tools").setDesc("Open the timeline or inspect configured import directories.").addButton((button) => button.setButtonText("Open timeline").onClick(() => this.plugin.activateTimeline())).addButton((button) => button.setButtonText("Detect imports").onClick(async () => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "journalTools")).setDesc(t4(this.plugin.settings, "journalToolsDesc")).addButton((button) => button.setButtonText(t4(this.plugin.settings, "openTimeline")).onClick(() => this.plugin.activateTimeline())).addButton((button) => button.setButtonText(t4(this.plugin.settings, "detectImports")).onClick(async () => {
       const result = await this.plugin.journalIndex.detectSources(this.plugin.settings);
       new Notice3(`${result.files} files, ${result.noDate.length} without a date`);
     }));
@@ -4589,7 +4994,7 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
         await this._refreshViews();
       })
     );
-    new Setting(containerEl).setName("Weather timezone").setDesc("IANA timezone used for both diary date comparisons and Open-Meteo. Use auto for the system timezone.").addText((text) => text.setPlaceholder("auto or Asia/Shanghai").setValue(String(this.plugin.settings.weatherTimezone || "auto")).onChange(async (value) => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "weatherTimezone")).setDesc(t4(this.plugin.settings, "weatherTimezoneDesc")).addText((text) => text.setPlaceholder("auto or Asia/Shanghai").setValue(String(this.plugin.settings.weatherTimezone || "auto")).onChange(async (value) => {
       this.plugin.settings.weatherTimezone = value.trim() || "auto";
       await this.plugin.saveSettings();
       await this._refreshViews();
@@ -4608,8 +5013,9 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
         await this._refreshViews();
       })
     );
-    new Setting(containerEl).setName(_s("s_language")).setDesc(_s("s_languageDesc")).addDropdown(
-      (dd) => dd.addOption("en", _s("s_english")).addOption("zh", _s("s_chinese")).setValue(this.plugin.settings.weatherLanguage).onChange(async (value) => {
+    new Setting(containerEl).setName(t4(this.plugin.settings, "language")).setDesc(t4(this.plugin.settings, "languageDesc")).addDropdown(
+      (dd) => dd.addOption("en", t4(this.plugin.settings, "english")).addOption("zh", t4(this.plugin.settings, "chinese")).setValue(this.plugin.settings.displayLanguage).onChange(async (value) => {
+        this.plugin.settings.displayLanguage = value;
         this.plugin.settings.weatherLanguage = value;
         await this.plugin.saveSettings();
         this.display();
@@ -4618,6 +5024,7 @@ var CalendarSidebarSettingsTab = class extends PluginSettingTab {
           leaf.view._syncNoteOverlays();
           leaf.view.refresh();
         }
+        this.plugin.refreshJournalViews();
       })
     );
     new Setting(containerEl).setName(_s("s_backfill")).setDesc(_s("s_backfillDesc")).addButton(
@@ -4850,19 +5257,9 @@ var OnThisDayModal = class {
   _setPhotoBackground(bgEl, imageLink, dateStr) {
     try {
       const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const file = this.app.metadataCache.getFirstLinkpathDest(imageLink, sourcePath);
-      if (!file) return;
-      const ext = file.extension.toLowerCase();
-      if (["heic", "heif"].includes(ext) && this.plugin.heicCache) {
-        this.plugin.heicCache.getThumbnail(file).then((result) => {
-          if (result && bgEl.isConnected) {
-            bgEl.style.backgroundImage = `url(${result.dataUrl})`;
-          }
-        });
-      } else {
-        const url = this.app.vault.getResourcePath(file);
-        bgEl.style.backgroundImage = `url(${url})`;
-      }
+      this.plugin.thumbnailService.load(imageLink, sourcePath).then((result) => {
+        if (result && bgEl.isConnected) bgEl.style.backgroundImage = `url(${result.url})`;
+      });
     } catch (e) {
     }
   }

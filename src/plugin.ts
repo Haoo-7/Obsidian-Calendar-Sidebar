@@ -10,6 +10,9 @@ const { MoodStore } = require('./mood-store');
 const { MoodPickerModal } = require('./mood-picker-modal');
 const { JournalTimelineView, JOURNAL_TIMELINE_VIEW } = require('./journal-timeline-view');
 const { formatDateInTimeZone } = require('./date-utils');
+const { ThumbnailService } = require('./thumbnail-service');
+const { getDisplayLanguage, moodLabel, t } = require('./i18n');
+const { getMoodColor } = require('./mood');
 
 const VIEW_TYPE = 'calendar-sidebar-view';
 const OVERLAY_ATTR = 'data-cal-weather-overlay';
@@ -30,6 +33,7 @@ const DEFAULT_SETTINGS = {
   weatherTtlHours: 2,     // cache TTL in hours before re-fetch
   weatherTimezone: 'auto', // Open-Meteo timezone mode
   weatherLanguage: 'zh',  // 'en' | 'zh' — display language for weather labels
+  displayLanguage: 'zh',  // global plugin language; migrated from weatherLanguage
   // --- EXIF metadata ---
   showExif: true,         // show EXIF metadata tooltip on image hover
   exifReverseGeocode: false, // never send GPS coordinates unless explicitly enabled
@@ -71,6 +75,7 @@ class CalendarSidebarPlugin extends Plugin {
     this.exifCache = new ImageMetadataCache(this.app);
     // HEIC thumbnail conversion cache
     this.heicCache = new HeicCache(this.app);
+    this.thumbnailService = new ThumbnailService(this.app, this.heicCache);
     // Reverse geocoder for EXIF GPS coordinates (Nominatim, free)
     this.geocoder = new ReverseGeocoder();
 
@@ -94,14 +99,14 @@ class CalendarSidebarPlugin extends Plugin {
     // Command to open the calendar (in case it gets closed)
     this.addCommand({
       id: 'open-calendar-sidebar',
-      name: 'Open Calendar Sidebar',
+      name: t(this.settings, 'openCalendar'),
       callback: () => this.activateView(),
     });
 
     // Command to refresh weather for the active date
     this.addCommand({
       id: 'refresh-weather',
-      name: 'Refresh Weather for Active Date',
+      name: t(this.settings, 'refreshWeather'),
       callback: () => {
         const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
         if (leaf?.view) {
@@ -115,7 +120,7 @@ class CalendarSidebarPlugin extends Plugin {
     // Command: Open On This Day modal
     this.addCommand({
       id: 'open-on-this-day',
-      name: 'Open On This Day / 打开去年今日',
+      name: t(this.settings, 'openOnThisDay'),
       callback: () => {
         const today = new Date();
         this.openOnThisDay(today.getMonth() + 1, today.getDate());
@@ -124,35 +129,30 @@ class CalendarSidebarPlugin extends Plugin {
 
     this.addCommand({
       id: 'open-journal-timeline',
-      name: 'Open Journal Timeline',
+      name: t(this.settings, 'openTimelineCommand'),
       callback: () => this.activateTimeline(),
     });
     this.addCommand({
       id: 'new-daily-note',
-      name: 'Create Daily Note',
+      name: t(this.settings, 'newDailyCommand'),
       callback: () => this.createDailyNoteForToday(),
     });
     this.addCommand({
-      id: 'new-journal-entry',
-      name: 'Create Journal Entry',
-      callback: () => this.createJournalEntry(),
-    });
-    this.addCommand({
       id: 'record-current-mood',
-      name: 'Record Current Journal Mood',
+      name: t(this.settings, 'recordMoodCommand'),
       callback: () => this.recordCurrentMood(),
     });
     this.addCommand({
       id: 'export-journal-metadata',
-      name: 'Export Journal Metadata JSON',
+      name: t(this.settings, 'exportMetadataCommand'),
       callback: async () => {
         const path = await this.moodStore.exportTo();
-        new Notice(`Journal metadata exported to ${path}`);
+        new Notice(t(this.settings, 'metadataExported', { path }));
       },
     });
     this.addCommand({
       id: 'restore-journal-metadata-backup',
-      name: 'Restore Journal Metadata Backup',
+      name: t(this.settings, 'restoreMetadataCommand'),
       callback: async () => {
         try {
           const backupPath = `${this.moodStore.metadataPath}.bak`;
@@ -160,7 +160,7 @@ class CalendarSidebarPlugin extends Plugin {
           await this.moodStore.restoreFrom(raw);
           await this.journalIndex.refresh(this.settings);
           this.refreshJournalViews();
-          new Notice('Journal metadata backup restored');
+          new Notice(t(this.settings, 'metadataRestored'));
         } catch (error) {
           new Notice(`Could not restore journal metadata: ${error.message || error}`);
         }
@@ -168,17 +168,17 @@ class CalendarSidebarPlugin extends Plugin {
     });
     this.addCommand({
       id: 'check-journal-metadata-integrity',
-      name: 'Check Journal Metadata Integrity',
+      name: t(this.settings, 'integrityCommand'),
       callback: async () => {
         const result = await this.moodStore.checkIntegrity();
         new Notice(result.valid && result.missingFiles.length === 0
-          ? 'Journal metadata is valid'
+          ? t(this.settings, 'metadataValid')
           : `Metadata check: ${result.invalidRecords.length} invalid, ${result.missingFiles.length} missing files`);
       },
     });
     this.addCommand({
       id: 'import-frontmatter-mood-metadata',
-      name: 'Import Frontmatter Mood Metadata',
+      name: t(this.settings, 'importFrontmatterCommand'),
       callback: async () => {
         const count = await this.moodStore.importFrontmatter(
           this.journalIndex.getEntries().map((entry) => entry.path),
@@ -186,12 +186,12 @@ class CalendarSidebarPlugin extends Plugin {
         );
         await this.journalIndex.refresh(this.settings);
         this.refreshJournalViews();
-        new Notice(`Imported ${count} mood records`);
+        new Notice(t(this.settings, 'importedMoods', { count }));
       },
     });
     this.addCommand({
       id: 'detect-journal-import-directories',
-      name: 'Detect Journal Import Directories',
+      name: t(this.settings, 'detectImportsCommand'),
       callback: async () => {
         const result = await this.journalIndex.detectSources(this.settings);
         const fields = Object.entries(result.fields).map(([key, value]) => `${key}: ${value}`).join(', ');
@@ -266,19 +266,6 @@ class CalendarSidebarPlugin extends Plugin {
     await this.journalIndex.refreshFile(path, this.settings);
   }
 
-  async createJournalEntry() {
-    const source = this.journalIndex.resolveSources(this.settings).find((item) => item.type === 'journal' || item.type === 'external')
-      || { path: 'Calendar/Entries' };
-    await this.ensureFolder(source.path);
-    const stamp = new Date();
-    const date = _formatDate(stamp);
-    const time = `${String(stamp.getHours()).padStart(2, '0')}-${String(stamp.getMinutes()).padStart(2, '0')}`;
-    const path = `${source.path}/${date} ${time}.md`;
-    const file = await this.ensureJournalFile(path, '');
-    await this.app.workspace.getLeaf('split').openFile(file);
-    await this.journalIndex.refreshFile(path, this.settings);
-  }
-
   async recordCurrentMood() {
     const activeFile = this.app.workspace.activeLeaf?.view?.file;
     const sources = this.journalIndex.resolveSources(this.settings);
@@ -297,11 +284,12 @@ class CalendarSidebarPlugin extends Plugin {
     new MoodPickerModal(this.app, {
       filePath: path,
       initial: this.moodStore.get(path) || entry?.mood,
+      settings: this.settings,
       onSave: async ({ score, labels }) => {
         await this.moodStore.set(path, score, labels, this.settings);
         await this.journalIndex.refreshFile(path, this.settings);
         this.refreshJournalViews();
-        new Notice(`Mood saved for ${path}`);
+        new Notice(`${t(this.settings, 'moodSaved')}: ${path}`);
       },
     }).open();
   }
@@ -317,7 +305,7 @@ class CalendarSidebarPlugin extends Plugin {
     if (now.getHours() !== Number(this.settings.reminderHour ?? 21) || now.getMinutes() !== 0) return;
     const date = _formatDate(now);
     if (this.journalIndex.getEntries().some((entry) => entry.date === date)) return;
-    new Notice('No journal entry for today');
+    new Notice(t(this.settings, 'dailyReminder'));
   }
 
   async ensureFolder(path) {
@@ -473,11 +461,14 @@ class CalendarSidebarPlugin extends Plugin {
     // Delete stale cache entries to prevent data.json bloat
     this._cleanupWeatherCache();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings.displayLanguage = getDisplayLanguage({ displayLanguage: data.displayLanguage, weatherLanguage: data.weatherLanguage });
+    this.settings.weatherLanguage = this.settings.displayLanguage;
     delete this.settings.weatherCache; // settings object shouldn't carry the cache
   }
 
   async saveSettings() {
     const settings = { ...this.settings };
+    settings.weatherLanguage = settings.displayLanguage || settings.weatherLanguage || 'zh';
     this.moodStore?.configure(settings);
     await this._enqueueDataWrite((data) => {
       Object.assign(data, settings);
@@ -1103,64 +1094,82 @@ button.cal-weather-refresh:hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--journal-mood-color, var(--text-muted));
-  opacity: 0.9;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.cal-mood-button svg { width: 12px; height: 12px; }
-.cal-mood-button:hover { color: var(--text-normal); opacity: 1; }
-.cal-mood-button.mood-2 { --journal-mood-color: #3689a4; }
-.cal-mood-button.mood-1 { --journal-mood-color: #4d9b70; }
-.cal-mood-button.mood-0 { --journal-mood-color: #a18442; }
-.cal-mood-button.mood--1 { --journal-mood-color: #d97745; }
-.cal-mood-button.mood--2 { --journal-mood-color: #c2415d; }
-.journal-timeline-view { padding: 14px; overflow: auto; }
-.journal-timeline-header, .journal-timeline-entry-top, .journal-timeline-meta, .journal-timeline-actions, .journal-timeline-filters, .journal-mood-actions { display: flex; align-items: center; }
-.journal-timeline-header { justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.journal-timeline-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.journal-timeline-heading h2 { margin: 0; font-size: 18px; }
-.journal-timeline-count { color: var(--text-muted); font-size: 12px; }
-.journal-timeline-actions { gap: 4px; }
-.journal-timeline-actions button, .journal-timeline-filters > button { width: 28px; height: 28px; padding: 5px; }
-.journal-timeline-filters { gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-.journal-timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
-.journal-stat { padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border); min-width: 0; }
+.cal-mood-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--journal-mood-color); }
+.cal-mood-button:hover .cal-mood-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--journal-mood-color) 35%, transparent); }
+.cal-mood-button.mood-2 { --journal-mood-color: #4b93d1; }
+.cal-mood-button.mood-1 { --journal-mood-color: #56a86a; }
+.cal-mood-button.mood-0 { --journal-mood-color: #d9bd4c; }
+.cal-mood-button.mood--1 { --journal-mood-color: #e68a3b; }
+.cal-mood-button.mood--2 { --journal-mood-color: #d84b76; }
+.journal-timeline-view { box-sizing: border-box; width: 100%; min-width: 0; padding: 14px; overflow-x: hidden; overflow-y: auto; }
+.journal-timeline-header, .journal-timeline-entry-top, .journal-timeline-meta, .journal-timeline-actions, .journal-timeline-filter-row, .journal-timeline-filter-menu, .journal-mood-actions { display: flex; align-items: center; min-width: 0; }
+.journal-timeline-header { justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.journal-timeline-heading { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; }
+.journal-timeline-heading h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font-size: 18px; }
+.journal-timeline-count { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
+.journal-timeline-actions { flex: 0 0 auto; gap: 4px; }
+.journal-timeline-actions button, .journal-timeline-filter-row > button { width: 28px; height: 28px; padding: 5px; flex: 0 0 28px; }
+.journal-timeline-filter-area, .journal-timeline-filter-row, .journal-timeline-filter-summary { width: 100%; min-width: 0; }
+.journal-timeline-filter-row { gap: 6px; margin-bottom: 6px; }
+.journal-timeline-filter-row input[type='search'] { flex: 1 1 auto; width: 1px; min-width: 0; }
+.journal-timeline-filter-menu { flex-wrap: wrap; gap: 6px; padding: 7px; margin-bottom: 6px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary); }
+.journal-timeline-filter-menu.is-hidden { display: none; }
+.journal-timeline-filter-menu input[type='date'], .journal-timeline-filter-menu select { flex: 1 1 100px; min-width: 0; max-width: 160px; }
+.journal-timeline-favorite-filter { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--text-muted); font-size: 12px; }
+.journal-timeline-filter-summary { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.journal-filter-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 7px; font-size: 11px; }
+.journal-timeline-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; min-width: 0; margin-bottom: 12px; }
+.journal-stat { min-width: 0; overflow: hidden; padding: 6px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .journal-stat-value { font-size: 15px; color: var(--text-normal); }
-.journal-stat-label { color: var(--text-muted); font-size: 11px; }
-.journal-stat-trend { grid-column: 1 / -1; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-filters input[type='search'] { flex: 1 1 180px; min-width: 120px; }
-.journal-timeline-filters input[type='date'], .journal-timeline-filters select { flex: 0 1 140px; min-width: 0; }
-.journal-timeline-favorite-filter { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 12px; }
-.journal-timeline-list { display: grid; gap: 8px; }
-.journal-timeline-entry { display: flex; gap: 10px; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 7px; cursor: pointer; background: var(--background-primary); }
-.journal-timeline-entry:hover, .journal-timeline-entry:focus-visible { border-color: var(--interactive-accent); outline: none; }
-.journal-timeline-marker { width: 5px; border-radius: 3px; flex: 0 0 5px; background: var(--background-modifier-border); }
-.journal-timeline-marker.mood-2 { background: #3689a4; }
-.journal-timeline-marker.mood-1 { background: #4d9b70; }
-.journal-timeline-marker.mood-0 { background: #a18442; }
-.journal-timeline-marker.mood--1 { background: #d97745; }
-.journal-timeline-marker.mood--2 { background: #c2415d; }
-.journal-timeline-entry-body { min-width: 0; flex: 1; }
-.journal-timeline-entry-top { gap: 8px; color: var(--text-muted); font-size: 11px; }
-.journal-timeline-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-favorite { color: var(--text-accent); }
-.journal-timeline-entry h3 { margin: 4px 0; font-size: 14px; }
-.journal-timeline-excerpt { color: var(--text-muted); font-size: 12px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-timeline-meta { gap: 10px; color: var(--text-faint); font-size: 11px; margin-top: 6px; }
-.journal-timeline-empty { color: var(--text-muted); padding: 28px 8px; text-align: center; }
+.journal-stat-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11px; }
+.journal-stat-trend { grid-column: 1 / -1; min-width: 0; }
+.journal-stat-trend-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-top: 4px; }
+.journal-stat-trend-cell { min-width: 0; height: 7px; border-radius: 3px; }
+.journal-timeline-list { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; gap: 8px; }
+.journal-timeline-entry { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; gap: 10px; padding: 10px; border: 1px solid var(--background-modifier-border); border-left: 4px solid var(--background-modifier-border); border-radius: 7px; cursor: pointer; background: var(--background-primary); }
+.journal-timeline-entry.has-thumbnail { grid-template-columns: minmax(0, 1fr) 88px; }
+.journal-timeline-entry.mood-score-2 { border-left-color: #4b93d1; }
+.journal-timeline-entry.mood-score-1 { border-left-color: #56a86a; }
+.journal-timeline-entry.mood-score-0 { border-left-color: #d9bd4c; }
+.journal-timeline-entry.mood-score--1 { border-left-color: #e68a3b; }
+.journal-timeline-entry.mood-score--2 { border-left-color: #d84b76; }
+.journal-timeline-entry:hover, .journal-timeline-entry:focus-visible { border-right-color: var(--interactive-accent); outline: none; }
+.journal-timeline-entry-body { min-width: 0; overflow: hidden; }
+.journal-timeline-entry-top { flex-wrap: wrap; gap: 4px 7px; min-width: 0; color: var(--text-muted); }
+.journal-timeline-entry-date { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0; overflow: hidden; color: var(--text-normal); font-size: 14px; font-weight: 600; }
+.journal-timeline-entry-iso { display: none; }
+.journal-timeline-favorite { flex: 0 0 auto; color: var(--text-accent); font-size: 11px; }
+.journal-timeline-title { min-width: 0; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-normal); font-size: 13px; }
+.journal-timeline-excerpt { min-width: 0; max-width: 100%; margin-top: 4px; overflow: hidden; overflow-wrap: anywhere; color: var(--text-muted); font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.journal-timeline-meta { flex-wrap: wrap; gap: 5px 10px; min-width: 0; margin-top: 6px; overflow-wrap: anywhere; color: var(--text-faint); font-size: 11px; }
+.journal-timeline-thumbnail { position: relative; width: 88px; height: 88px; min-width: 88px; overflow: hidden; border-radius: 5px; background: var(--background-secondary); }
+.journal-timeline-thumbnail img { display: block; width: 88px; height: 88px; object-fit: cover; opacity: 0; transition: opacity 0.15s ease; }
+.journal-timeline-thumbnail.is-loaded img { opacity: 1; }
+.journal-timeline-thumbnail-count { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 10px; }
+.journal-timeline-empty { min-width: 0; padding: 28px 8px; overflow-wrap: anywhere; color: var(--text-muted); text-align: center; }
 .journal-mood-picker-modal .modal-content { min-width: 320px; }
 .journal-mood-picker h3 { margin-bottom: 4px; }
 .journal-mood-step { color: var(--text-muted); margin: 0 0 16px; }
-.journal-mood-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.journal-mood-level { min-height: 64px; color: var(--journal-mood-color); border: 1px solid var(--background-modifier-border); background: var(--background-secondary); }
-.journal-mood-level:hover, .journal-mood-level:focus-visible { border-color: var(--journal-mood-color); outline: none; }
-.journal-mood-level svg { width: 28px; height: 28px; }
+.journal-mood-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.journal-mood-level { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 76px; gap: 6px; color: var(--journal-mood-color); border: 1px solid var(--background-modifier-border); background: var(--background-secondary); }
+.journal-mood-level:hover, .journal-mood-level:focus-visible, .journal-mood-level[aria-checked='true'] { border-color: var(--journal-mood-color); outline: none; }
+.journal-mood-level[aria-checked='true'] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--journal-mood-color) 35%, transparent); }
+.journal-mood-level[aria-checked='true']::after { content: '✓'; position: absolute; top: 3px; right: 5px; font-size: 12px; }
+.journal-mood-dot { display: block; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%; background: var(--journal-mood-color); }
+.journal-mood-level-label { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .journal-mood-selected { color: var(--text-muted); text-align: center; font-size: 12px; margin-top: 10px; }
 .journal-mood-labels { display: flex; flex-wrap: wrap; gap: 7px; }
 .journal-mood-label[aria-pressed='true'] { border-color: var(--interactive-accent); color: var(--text-accent); background: var(--background-modifier-hover); }
 .journal-mood-actions { justify-content: space-between; gap: 8px; margin-top: 22px; }
+@media (max-width: 420px) {
+  .journal-timeline-view { padding: 10px; }
+  .journal-timeline-entry.has-thumbnail { grid-template-columns: minmax(0, 1fr) 72px; }
+  .journal-timeline-thumbnail, .journal-timeline-thumbnail img { width: 72px; height: 72px; min-width: 72px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .journal-mood-picker *, .journal-timeline-entry { transition: none !important; animation: none !important; }
 }
@@ -2349,7 +2358,7 @@ class HeicCache {
    * @returns {Promise<{dataUrl:string, width:number, height:number}|null>}
    */
   async getThumbnail(file) {
-    const key = file.path;
+    const key = `${file.path}:${file.stat?.mtime || 0}`;
     if (this._cache.has(key)) return this._cache.get(key);
     if (this._pending.has(key)) return this._pending.get(key);
 
@@ -2419,8 +2428,8 @@ class HeicCache {
 
   invalidate(filePath) {
     if (filePath) {
-      this._cache.delete(filePath);
-      this._pending.delete(filePath);
+      for (const key of this._cache.keys()) if (key.startsWith(`${filePath}:`)) this._cache.delete(key);
+      for (const key of this._pending.keys()) if (key.startsWith(`${filePath}:`)) this._pending.delete(key);
     } else {
       this._cache.clear();
       this._pending.clear();
@@ -3000,11 +3009,12 @@ class CalendarView extends ItemView {
           cls: `cal-mood-button mood-${mood.score}`,
           attr: {
             type: 'button',
-            'aria-label': `Record mood for ${dateStr}`,
-            title: `Mood ${mood.score > 0 ? '+' : ''}${mood.score}`,
+            'aria-label': `${t(this.plugin.settings, 'recordMood')}: ${dateStr}`,
+            title: moodLabel(this.plugin.settings, mood.score),
           },
         });
-        setIcon(moodButton, 'heart');
+        moodButton.style.setProperty('--journal-mood-color', getMoodColor(mood.score));
+        moodButton.createSpan({ cls: 'cal-mood-dot', attr: { 'aria-hidden': 'true' } });
         moodButton.addEventListener('pointerdown', (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3299,20 +3309,8 @@ class CalendarView extends ItemView {
   async _setBackground(bgEl, link, dateStr) {
     try {
       const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const file = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
-      if (file instanceof TFile) {
-        const ext = file.extension?.toLowerCase();
-        if (HEIC_EXTS.includes(ext)) {
-          // Convert HEIC to JPEG thumbnail
-          const thumb = await this.plugin.heicCache.getThumbnail(file);
-          if (thumb) {
-            bgEl.style.backgroundImage = `url("${thumb.dataUrl}")`;
-          }
-        } else {
-          const url = this.app.vault.getResourcePath(file);
-          bgEl.style.backgroundImage = `url("${url}")`;
-        }
-      }
+      const result = await this.plugin.thumbnailService.load(link, sourcePath);
+      if (result && bgEl.isConnected) bgEl.style.backgroundImage = `url("${result.url}")`;
     } catch (_) {
       // silent
     }
@@ -4007,11 +4005,11 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
     /* ======================
        Section: Journal and mood
        ====================== */
-    containerEl.createEl('h3', { text: 'Journal and mood' });
+    containerEl.createEl('h3', { text: t(this.plugin.settings, 'journalSources') });
 
     new Setting(containerEl)
-      .setName('Journal sources')
-      .setDesc('JSON array of source directories. Each item uses id, path, type, and optional dateField.')
+      .setName(t(this.plugin.settings, 'journalSources'))
+      .setDesc(t(this.plugin.settings, 'journalSourcesDesc'))
       .addTextArea((text) => {
         text.setValue(JSON.stringify(this.plugin.settings.journalSources || [], null, 2));
         text.inputEl.rows = 5;
@@ -4031,8 +4029,8 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Mood metadata path')
-      .setDesc('Vault-relative JSON path. The JSON file is the primary mood store.')
+      .setName(t(this.plugin.settings, 'moodMetadataPath'))
+      .setDesc(t(this.plugin.settings, 'moodMetadataPathDesc'))
       .addText((text) => text
         .setValue(this.plugin.settings.moodMetadataPath)
         .setPlaceholder('Calendar/journal-metadata.json')
@@ -4047,8 +4045,8 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Mirror mood to frontmatter')
-      .setDesc('When enabled, saving a mood also writes mood and mood_labels to the Markdown frontmatter.')
+      .setName(t(this.plugin.settings, 'mirrorMood'))
+      .setDesc(t(this.plugin.settings, 'mirrorMoodDesc'))
       .addToggle((toggle) => toggle
         .setValue(Boolean(this.plugin.settings.mirrorMoodToFrontmatter))
         .onChange(async (value) => {
@@ -4057,8 +4055,8 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Daily reminder')
-      .setDesc('Show a local reminder when today has no journal entry.')
+      .setName(t(this.plugin.settings, 'reminder'))
+      .setDesc(t(this.plugin.settings, 'reminderDesc'))
       .addToggle((toggle) => toggle
         .setValue(Boolean(this.plugin.settings.reminderEnabled))
         .onChange(async (value) => {
@@ -4078,13 +4076,13 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Journal tools')
-      .setDesc('Open the timeline or inspect configured import directories.')
+      .setName(t(this.plugin.settings, 'journalTools'))
+      .setDesc(t(this.plugin.settings, 'journalToolsDesc'))
       .addButton((button) => button
-        .setButtonText('Open timeline')
+        .setButtonText(t(this.plugin.settings, 'openTimeline'))
         .onClick(() => this.plugin.activateTimeline()))
       .addButton((button) => button
-        .setButtonText('Detect imports')
+        .setButtonText(t(this.plugin.settings, 'detectImports'))
         .onClick(async () => {
           const result = await this.plugin.journalIndex.detectSources(this.plugin.settings);
           new Notice(`${result.files} files, ${result.noDate.length} without a date`);
@@ -4166,8 +4164,8 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Weather timezone')
-      .setDesc('IANA timezone used for both diary date comparisons and Open-Meteo. Use auto for the system timezone.')
+      .setName(t(this.plugin.settings, 'weatherTimezone'))
+      .setDesc(t(this.plugin.settings, 'weatherTimezoneDesc'))
       .addText((text) => text
         .setPlaceholder('auto or Asia/Shanghai')
         .setValue(String(this.plugin.settings.weatherTimezone || 'auto'))
@@ -4205,14 +4203,15 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName(_s('s_language'))
-      .setDesc(_s('s_languageDesc'))
+      .setName(t(this.plugin.settings, 'language'))
+      .setDesc(t(this.plugin.settings, 'languageDesc'))
       .addDropdown((dd) =>
         dd
-          .addOption('en', _s('s_english'))
-          .addOption('zh', _s('s_chinese'))
-          .setValue(this.plugin.settings.weatherLanguage)
+          .addOption('en', t(this.plugin.settings, 'english'))
+          .addOption('zh', t(this.plugin.settings, 'chinese'))
+          .setValue(this.plugin.settings.displayLanguage)
           .onChange(async (value) => {
+            this.plugin.settings.displayLanguage = value;
             this.plugin.settings.weatherLanguage = value;
             await this.plugin.saveSettings();
             this.display();
@@ -4221,6 +4220,7 @@ class CalendarSidebarSettingsTab extends PluginSettingTab {
               leaf.view._syncNoteOverlays();
               leaf.view.refresh();
             }
+            this.plugin.refreshJournalViews();
           })
       );
 
@@ -4557,19 +4557,9 @@ class OnThisDayModal {
   _setPhotoBackground(bgEl, imageLink, dateStr) {
     try {
       const sourcePath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const file = this.app.metadataCache.getFirstLinkpathDest(imageLink, sourcePath);
-      if (!file) return;
-      const ext = file.extension.toLowerCase();
-      if (['heic', 'heif'].includes(ext) && this.plugin.heicCache) {
-        this.plugin.heicCache.getThumbnail(file).then((result) => {
-          if (result && bgEl.isConnected) {
-            bgEl.style.backgroundImage = `url(${result.dataUrl})`;
-          }
-        });
-      } else {
-        const url = this.app.vault.getResourcePath(file);
-        bgEl.style.backgroundImage = `url(${url})`;
-      }
+      this.plugin.thumbnailService.load(imageLink, sourcePath).then((result) => {
+        if (result && bgEl.isConnected) bgEl.style.backgroundImage = `url(${result.url})`;
+      });
     } catch (e) { /* silently fail */ }
   }
 }

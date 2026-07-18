@@ -10,6 +10,10 @@
 - Added explicit frontmatter mood import and opt-in frontmatter mirroring.
 
 ### Fixed
+- Fixed timeline cards overflowing narrow leaves by constraining grid tracks, text content, and thumbnail columns.
+- Fixed daily-note excerpts that retained calendar navigation and icon-prefixed `Freewrite` headings.
+- Fixed timeline thumbnails to resolve relative links, defer loading, and fall back to text-only cards when media is unavailable.
+- Added a visible-range fallback for deferred thumbnails in Obsidian leaves whose observer callbacks are delayed during initial layout.
 - Prevented EXIF metadata from being interpreted as HTML in the shared tooltip.
 - Fixed stale On This Day results after daily-note edits.
 - Fixed date-prefixed thumbnails inside asset subfolders.
@@ -18,6 +22,8 @@
 - Fixed local-date/weather timezone mismatches and stale async UI updates.
 
 ### Changed
+- Simplified the timeline to daily notes by default. `Calendar/Entries` is no longer a default source, and external imports appear as ordinary journal notes without a source filter.
+- Replaced timeline mood icons with an accessible five-level color scale and compact seven-day trend cells.
 - Added serialized plugin-data writes and unload flushing for weather cache updates.
 - Added an opt-in setting for EXIF GPS reverse geocoding.
 - Added TypeScript core modules, Vitest tests, and an esbuild build facade.

@@ -20,6 +20,8 @@ DayOne-style monthly calendar panel in the Obsidian left sidebar, above the file
 - **Auto-create** — click a date with no note → confirmation dialog → create from Daily Notes template (Templater supported)
 - **Configurable folder** — search-suggest for daily notes folder path
 - **Thumbnail filter** — all embedded images or only date-prefixed filenames
+- **Journal timeline** — compact search and date, mood, and favorite filters; external import folders are optional and shown as ordinary notes
+- **Mood metadata** — five-level color picker with optional labels, stored in vault JSON by default
 
 ## Weather (Optional)
 
@@ -37,6 +39,12 @@ Enable weather data from [Open-Meteo](https://open-meteo.com/) (no API key neede
 Weather snapshots are stored in the plugin's `data.json`, keyed by date and weather configuration. Existing `_calendar_weather` frontmatter is read for backward compatibility and migrated when its coordinates and units match the current settings. A compact weather card appears below the month header showing icon, temperature, feels-like, humidity, and location. Cached dates show a small weather badge on the calendar grid. Open-Meteo requests use the location's automatic timezone. Use the **"Refresh Weather for Active Date"** command to force-update.
 
 EXIF GPS reverse geocoding is disabled by default. Enable **Resolve GPS locations** only if you want coordinates sent to OpenStreetMap Nominatim to display place names.
+
+## Journal timeline and imports
+
+The timeline indexes the configured daily-notes folder by default (`Calendar/Daily`). Optional external-import folders can be added in Journal sources and are shown as ordinary journal notes without a separate entry type or source filter. Dates are resolved from the configured date field, `date`, `creationDate`, and then valid date-prefixed filenames; modification time is never used as a fallback.
+
+Use [Day One Importer](https://github.com/MarcDonald/obsidian-day-one-importer) or [Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) to create Markdown files, then add the output folder. This plugin does not parse JSON/ZIP exports or rewrite imported files. Mood metadata is authoritative in `Calendar/journal-metadata.json` by default; frontmatter mirroring is opt-in.
 
 **Limitation**: Historical dates beyond the forecast window may return no data (archive API support is best-effort).
 
@@ -66,6 +74,9 @@ Configured in Obsidian Settings → Community Plugins → Calendar Sidebar:
 | **Daily notes folder** | Path to your daily notes folder (search + browse) |
 | **Thumbnail filter** | `All embedded images` (default) or `Only date-prefixed` (filenames starting with `YYYY-MM-DD_`) |
 | **Resolve GPS locations** | Opt-in reverse geocoding of EXIF GPS coordinates through OpenStreetMap Nominatim |
+| **Journal sources** | Optional external-import folder configuration; the daily-notes folder is the default |
+| **Mood metadata path** | Vault JSON path, default `Calendar/journal-metadata.json` |
+| **Mirror mood to frontmatter** | Disabled by default |
 
 ## Templater Integration
 
