@@ -94,6 +94,8 @@ Day One 或 Apple Journal 导入请先使用专业导入插件，再把输出目
 | **Mood metadata path** | vault 内心情 JSON 路径，默认 `Calendar/journal-metadata.json` |
 | **Mirror mood to frontmatter** | 默认关闭的 frontmatter 镜像 |
 | **Daily reminder** | 可关闭的本地记录提醒 |
+| **Show mood markers on calendar** | 显示或隐藏日期格心情颜色标记 |
+| **Show weather on calendar** | 显示或隐藏天气卡片和日期格天气图标 |
 
 ## 与 Templater 配合
 

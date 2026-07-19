@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Added independent calendar display switches for mood markers and weather card/date icons; both default to visible and do not affect stored data or the timeline.
+
 ## 2.0.0 (2026-07-19)
 
 ### Branding

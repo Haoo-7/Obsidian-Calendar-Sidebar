@@ -32,6 +32,8 @@ Journal bodies remain Markdown. The timeline indexes the configured daily-notes 
 
 Mood metadata is authoritative in `Calendar/journal-metadata.json` by default. Markdown frontmatter is unchanged unless mirroring is enabled, and deleted-note records remain recoverable as orphans.
 
+Calendar display can be simplified in Dayline settings by hiding mood markers or the weather card/date icons. These switches affect only the calendar view; mood records, weather cache, and the journal timeline remain available.
+
 **Installation**: Add `Haoo-7/Obsidian-Dayline` to BRAT, or download `dayline.zip` from [Releases](https://github.com/Haoo-7/Obsidian-Dayline/releases) and extract to `.obsidian/plugins/dayline/`. On first launch, Dayline migrates the old plugin `data.json` when the new directory has no data file.
 
 ---

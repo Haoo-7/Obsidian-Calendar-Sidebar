@@ -872,6 +872,11 @@ var init_i18n = __esm({
         detectImports: "\u68C0\u6D4B\u5BFC\u5165",
         weatherTimezone: "\u5929\u6C14\u65F6\u533A",
         weatherTimezoneDesc: "\u65E5\u8BB0\u65E5\u671F\u6BD4\u8F83\u548C Open-Meteo \u4F7F\u7528\u7684 IANA \u65F6\u533A\u3002auto \u4F7F\u7528\u7CFB\u7EDF\u65F6\u533A\u3002",
+        calendarDisplay: "\u65E5\u5386\u663E\u793A",
+        showCalendarMood: "\u663E\u793A\u65E5\u5386\u5FC3\u60C5\u6807\u8BB0",
+        showCalendarMoodDesc: "\u5728\u65E5\u671F\u683C\u663E\u793A\u5FC3\u60C5\u989C\u8272\u6807\u8BB0\uFF1B\u5173\u95ED\u540E\u4E0D\u4F1A\u5220\u9664\u5FC3\u60C5\u8BB0\u5F55\u3002",
+        showCalendarWeather: "\u663E\u793A\u65E5\u5386\u5929\u6C14",
+        showCalendarWeatherDesc: "\u663E\u793A\u9876\u90E8\u5929\u6C14\u5361\u7247\u548C\u65E5\u671F\u683C\u5929\u6C14\u56FE\u6807\uFF1B\u5173\u95ED\u540E\u4ECD\u4FDD\u7559\u5929\u6C14\u7F13\u5B58\u3002",
         openCalendar: "\u6253\u5F00 Dayline",
         refreshWeather: "\u5237\u65B0\u5F53\u524D\u65E5\u671F\u5929\u6C14",
         openOnThisDay: "\u6253\u5F00\u53BB\u5E74\u4ECA\u65E5",
@@ -949,6 +954,11 @@ var init_i18n = __esm({
         detectImports: "Detect imports",
         weatherTimezone: "Weather timezone",
         weatherTimezoneDesc: "IANA timezone used for diary dates and Open-Meteo. auto uses the system timezone.",
+        calendarDisplay: "Calendar display",
+        showCalendarMood: "Show mood markers on calendar",
+        showCalendarMoodDesc: "Show mood colors on date cells without deleting mood records when disabled.",
+        showCalendarWeather: "Show weather on calendar",
+        showCalendarWeatherDesc: "Show the weather card and date-cell weather icons; weather cache remains available when disabled.",
         openCalendar: "Open Dayline",
         refreshWeather: "Refresh weather for active date",
         openOnThisDay: "Open On This Day",
@@ -1506,6 +1516,24 @@ var init_thumbnail_service = __esm({
   }
 });
 
+// src/calendar-display.ts
+var calendar_display_exports = {};
+__export(calendar_display_exports, {
+  shouldShowCalendarMood: () => shouldShowCalendarMood,
+  shouldShowCalendarWeather: () => shouldShowCalendarWeather
+});
+function shouldShowCalendarMood(settings = {}) {
+  return settings.showCalendarMood !== false;
+}
+function shouldShowCalendarWeather(settings = {}) {
+  return settings.showCalendarWeather !== false;
+}
+var init_calendar_display = __esm({
+  "src/calendar-display.ts"() {
+    "use strict";
+  }
+});
+
 // src/plugin.ts
 var { Plugin, ItemView: ItemView2, TFolder, TFile: TFile2, Notice: Notice3, Modal: Modal2, PluginSettingTab, Setting, SuggestModal, requestUrl, setIcon: setIcon2 } = require("obsidian");
 var { JournalIndex: JournalIndex2 } = (init_journal_index(), __toCommonJS(journal_index_exports));
@@ -1516,6 +1544,7 @@ var { formatDateInTimeZone: formatDateInTimeZone2 } = (init_date_utils(), __toCo
 var { ThumbnailService: ThumbnailService2 } = (init_thumbnail_service(), __toCommonJS(thumbnail_service_exports));
 var { getDisplayLanguage: getDisplayLanguage3, moodLabel: moodLabel4, t: t4 } = (init_i18n(), __toCommonJS(i18n_exports));
 var { getMoodColor: getMoodColor3 } = (init_mood(), __toCommonJS(mood_exports));
+var { shouldShowCalendarMood: shouldShowCalendarMood2, shouldShowCalendarWeather: shouldShowCalendarWeather2 } = (init_calendar_display(), __toCommonJS(calendar_display_exports));
 var VIEW_TYPE = "calendar-sidebar-view";
 var OVERLAY_ATTR = "data-cal-weather-overlay";
 var DEFAULT_SETTINGS = {
@@ -1539,6 +1568,8 @@ var DEFAULT_SETTINGS = {
   // 'en' | 'zh' — display language for weather labels
   displayLanguage: "zh",
   // global plugin language; migrated from weatherLanguage
+  showCalendarMood: true,
+  showCalendarWeather: true,
   // --- EXIF metadata ---
   showExif: true,
   // show EXIF metadata tooltip on image hover
@@ -4132,7 +4163,7 @@ var CalendarView = class extends ItemView2 {
         cell.addEventListener("mouseenter", () => this._onExifEnter(cell, firstImage, dateStr));
         cell.addEventListener("mouseleave", () => this._onExifLeave());
       }
-      if (this.plugin.settings.weatherEnabled && this.weather.hasCachedSnapshot(dateStr)) {
+      if (this.plugin.settings.weatherEnabled && shouldShowCalendarWeather2(this.plugin.settings) && this.weather.hasCachedSnapshot(dateStr)) {
         const snap = this._readCachedWeather(dateStr);
         if (snap) {
           const badge = cell.createEl("img", { cls: "cal-weather-badge" });
@@ -4143,7 +4174,7 @@ var CalendarView = class extends ItemView2 {
         }
       }
       const dailyPath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const mood = this.plugin.moodStore?.get(dailyPath) || this.plugin.journalIndex?.getEntries().find((entry) => entry.path === dailyPath)?.mood;
+      const mood = shouldShowCalendarMood2(this.plugin.settings) ? this.plugin.moodStore?.get(dailyPath) || this.plugin.journalIndex?.getEntries().find((entry) => entry.path === dailyPath)?.mood : void 0;
       if (mood) {
         const moodButton = cell.createEl("button", {
           cls: `cal-mood-button mood-${mood.score}`,
@@ -4233,7 +4264,7 @@ var CalendarView = class extends ItemView2 {
   /* ----- Render weather card below month header (idempotent) ----- */
   _renderWeatherCard(containerEl) {
     const s = this.plugin.settings;
-    if (!s.weatherEnabled) {
+    if (!s.weatherEnabled || !shouldShowCalendarWeather2(s)) {
       return;
     }
     if (!_validateCoords(s.weatherLatitude, s.weatherLongitude)) {
@@ -4927,6 +4958,17 @@ var DaylineSettingsTab = class extends PluginSettingTab {
         if (leaf?.view?.refresh) leaf.view.refresh();
       })
     );
+    containerEl.createEl("h3", { text: t4(this.plugin.settings, "calendarDisplay") });
+    new Setting(containerEl).setName(t4(this.plugin.settings, "showCalendarMood")).setDesc(t4(this.plugin.settings, "showCalendarMoodDesc")).addToggle((toggle) => toggle.setValue(this.plugin.settings.showCalendarMood !== false).onChange(async (value) => {
+      this.plugin.settings.showCalendarMood = value;
+      await this.plugin.saveSettings();
+      await this._refreshViews();
+    }));
+    new Setting(containerEl).setName(t4(this.plugin.settings, "showCalendarWeather")).setDesc(t4(this.plugin.settings, "showCalendarWeatherDesc")).addToggle((toggle) => toggle.setValue(this.plugin.settings.showCalendarWeather !== false).onChange(async (value) => {
+      this.plugin.settings.showCalendarWeather = value;
+      await this.plugin.saveSettings();
+      await this._refreshViews();
+    }));
     containerEl.createEl("h3", { text: t4(this.plugin.settings, "journalSources") });
     new Setting(containerEl).setName(t4(this.plugin.settings, "journalSources")).setDesc(t4(this.plugin.settings, "journalSourcesDesc")).addTextArea((text) => {
       text.setValue(JSON.stringify(this.plugin.settings.journalSources || [], null, 2));

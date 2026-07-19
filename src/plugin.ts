@@ -13,6 +13,7 @@ const { formatDateInTimeZone } = require('./date-utils');
 const { ThumbnailService } = require('./thumbnail-service');
 const { getDisplayLanguage, moodLabel, t } = require('./i18n');
 const { getMoodColor } = require('./mood');
+const { shouldShowCalendarMood, shouldShowCalendarWeather } = require('./calendar-display');
 
 const VIEW_TYPE = 'calendar-sidebar-view';
 const OVERLAY_ATTR = 'data-cal-weather-overlay';
@@ -34,6 +35,8 @@ const DEFAULT_SETTINGS = {
   weatherTimezone: 'auto', // Open-Meteo timezone mode
   weatherLanguage: 'zh',  // 'en' | 'zh' — display language for weather labels
   displayLanguage: 'zh',  // global plugin language; migrated from weatherLanguage
+  showCalendarMood: true,
+  showCalendarWeather: true,
   // --- EXIF metadata ---
   showExif: true,         // show EXIF metadata tooltip on image hover
   exifReverseGeocode: false, // never send GPS coordinates unless explicitly enabled
@@ -3004,7 +3007,9 @@ class CalendarView extends ItemView {
       }
 
       // Weather badge for dates with cached weather
-      if (this.plugin.settings.weatherEnabled && this.weather.hasCachedSnapshot(dateStr)) {
+      if (this.plugin.settings.weatherEnabled
+        && shouldShowCalendarWeather(this.plugin.settings)
+        && this.weather.hasCachedSnapshot(dateStr)) {
         const snap = this._readCachedWeather(dateStr);
         if (snap) {
         const badge = cell.createEl('img', { cls: 'cal-weather-badge' });
@@ -3018,8 +3023,10 @@ class CalendarView extends ItemView {
       // Mood is stored outside Markdown. A frontmatter-only mood remains
       // visible through the index until the user explicitly imports it.
       const dailyPath = `${this.plugin.settings.dailyFolder}/${dateStr}.md`;
-      const mood = this.plugin.moodStore?.get(dailyPath)
-        || this.plugin.journalIndex?.getEntries().find((entry) => entry.path === dailyPath)?.mood;
+      const mood = shouldShowCalendarMood(this.plugin.settings)
+        ? this.plugin.moodStore?.get(dailyPath)
+          || this.plugin.journalIndex?.getEntries().find((entry) => entry.path === dailyPath)?.mood
+        : undefined;
       if (mood) {
         const moodButton = cell.createEl('button', {
           cls: `cal-mood-button mood-${mood.score}`,
@@ -3120,7 +3127,7 @@ class CalendarView extends ItemView {
   /* ----- Render weather card below month header (idempotent) ----- */
   _renderWeatherCard(containerEl) {
     const s = this.plugin.settings;
-    if (!s.weatherEnabled) {
+    if (!s.weatherEnabled || !shouldShowCalendarWeather(s)) {
       // Don't show anything when weather is disabled — avoid intrusive UI
       return;
     }
@@ -4017,6 +4024,30 @@ class DaylineSettingsTab extends PluginSettingTab {
             if (leaf?.view?.refresh) leaf.view.refresh();
           })
       );
+
+    containerEl.createEl('h3', { text: t(this.plugin.settings, 'calendarDisplay') });
+
+    new Setting(containerEl)
+      .setName(t(this.plugin.settings, 'showCalendarMood'))
+      .setDesc(t(this.plugin.settings, 'showCalendarMoodDesc'))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.showCalendarMood !== false)
+        .onChange(async (value) => {
+          this.plugin.settings.showCalendarMood = value;
+          await this.plugin.saveSettings();
+          await this._refreshViews();
+        }));
+
+    new Setting(containerEl)
+      .setName(t(this.plugin.settings, 'showCalendarWeather'))
+      .setDesc(t(this.plugin.settings, 'showCalendarWeatherDesc'))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.showCalendarWeather !== false)
+        .onChange(async (value) => {
+          this.plugin.settings.showCalendarWeather = value;
+          await this.plugin.saveSettings();
+          await this._refreshViews();
+        }));
 
     /* ======================
        Section: Journal and mood

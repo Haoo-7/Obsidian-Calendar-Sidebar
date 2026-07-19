@@ -77,6 +77,8 @@ Configured in Obsidian Settings → Community Plugins → Dayline:
 | **Journal sources** | Optional external-import folder configuration; the daily-notes folder is the default |
 | **Mood metadata path** | Vault JSON path, default `Calendar/journal-metadata.json` |
 | **Mirror mood to frontmatter** | Disabled by default |
+| **Show mood markers on calendar** | Hide or show mood colors on calendar date cells |
+| **Show weather on calendar** | Hide or show the weather card and date-cell weather icons |
 
 ## Templater Integration
 
